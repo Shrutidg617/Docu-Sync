@@ -5,6 +5,8 @@ const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const { Server } = require("socket.io");
 const Document = require("./models/Document");
+const Snapshot = require("./models/Snapshot");
+const ActivityLog = require("./models/ActivityLog");
 
 dotenv.config();
 
@@ -16,21 +18,35 @@ app.use(express.json());
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: "*",
     methods: ["GET", "POST"],
   },
 });
 
 const activeUsersByRoom = {};
 
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => {
-    console.log("MongoDB connected");
-  })
-  .catch((err) => {
+const { MongoMemoryServer } = require("mongodb-memory-server");
+
+async function connectToDatabase() {
+  try {
+    let mongoUri = process.env.MONGO_URI;
+
+    if (!mongoUri || mongoUri.trim() === "") {
+      console.log("No MONGO_URI provided. Starting a localized in-memory MongoDB server...");
+      const mongoServer = await MongoMemoryServer.create();
+      mongoUri = mongoServer.getUri();
+      console.log(`In-memory database successfully started at: ${mongoUri}`);
+    }
+
+    await mongoose.connect(mongoUri);
+    console.log("MongoDB securely connected!");
+  } catch (err) {
     console.error("MongoDB connection error:", err.message);
-  });
+    process.exit(1);
+  }
+}
+
+connectToDatabase();
 
 function getDefaultContent() {
   return "Welcome to DocuSync.\n\nStart editing collaboratively here.\n\nYou can save snapshots and restore them anytime.";
@@ -43,17 +59,16 @@ async function getOrCreateDocument(roomId) {
     doc = await Document.create({
       roomId,
       content: getDefaultContent(),
-      snapshots: [],
-      activityLogs: [
-        {
-          type: "system",
-          message: "Document created",
-          userName: "System",
-          userColor: "#64748b",
-          timestamp: new Date(),
-        },
-      ],
       updatedAt: new Date(),
+    });
+    
+    await ActivityLog.create({
+      roomId,
+      type: "system",
+      message: "Document created",
+      userName: "System",
+      userColor: "#64748b",
+      timestamp: new Date(),
     });
   }
 
@@ -61,25 +76,26 @@ async function getOrCreateDocument(roomId) {
 }
 
 async function addActivity(roomId, activity) {
-  return Document.findOneAndUpdate(
-    { roomId },
-    {
-      $push: {
-        activityLogs: {
-          ...activity,
-          timestamp: new Date(),
-        },
-      },
-      $set: { updatedAt: new Date() },
-    },
-    { new: true }
-  );
+  await Document.updateOne({ roomId }, { $set: { updatedAt: new Date() } });
+  return ActivityLog.create({
+    roomId,
+    ...activity,
+    timestamp: new Date(),
+  });
 }
 
 app.get("/api/document/:roomId", async (req, res) => {
   try {
-    const doc = await getOrCreateDocument(req.params.roomId);
-    res.json(doc);
+    const roomId = req.params.roomId;
+    const doc = await getOrCreateDocument(roomId);
+    const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
+    const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
+    
+    res.json({
+      ...doc.toObject(),
+      snapshots,
+      activityLogs
+    });
   } catch (error) {
     console.error("Fetch document error:", error);
     res.status(500).json({ error: "Failed to fetch document" });
@@ -94,21 +110,25 @@ app.post("/api/document/:roomId/snapshot", async (req, res) => {
     const doc = await getOrCreateDocument(roomId);
     const finalContent = typeof content === "string" ? content : "";
 
-    const latestSnapshot = doc.snapshots[doc.snapshots.length - 1];
+    const latestSnapshot = await Snapshot.findOne({ roomId }).sort({ timestamp: -1 });
     if (latestSnapshot && latestSnapshot.content === finalContent) {
-      return res.json(doc);
+      return res.json({ success: true, message: "No change" });
     }
 
     doc.content = finalContent;
+    doc.updatedAt = new Date();
+    await doc.save();
 
-    doc.snapshots.push({
+    await Snapshot.create({
+      roomId,
       content: finalContent,
       savedBy: savedBy || "Unknown User",
       savedByColor: savedByColor || "#4F46E5",
       timestamp: new Date(),
     });
 
-    doc.activityLogs.push({
+    await ActivityLog.create({
+      roomId,
       type: "snapshot",
       message:
         mode === "auto"
@@ -119,15 +139,15 @@ app.post("/api/document/:roomId/snapshot", async (req, res) => {
       timestamp: new Date(),
     });
 
-    doc.updatedAt = new Date();
-    await doc.save();
+    const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
+    const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
 
     io.to(roomId).emit("document-updated", {
       content: doc.content,
     });
 
-    io.to(roomId).emit("snapshots-updated", doc.snapshots);
-    io.to(roomId).emit("activity-updated", doc.activityLogs);
+    io.to(roomId).emit("snapshots-updated", snapshots);
+    io.to(roomId).emit("activity-updated", activityLogs);
 
     res.json(doc);
   } catch (error) {
@@ -148,24 +168,18 @@ app.post("/api/document/:roomId/restore/:snapshotId", async (req, res) => {
       return res.status(404).json({ error: "Document not found" });
     }
 
-    const snapshots = Array.isArray(doc.snapshots) ? doc.snapshots : [];
-
-    const snapshot = snapshots.find((snap) => {
-      if (!snap || !snap._id) return false;
-      return String(snap._id) === String(snapshotId);
-    });
+    const snapshot = await Snapshot.findOne({ _id: snapshotId, roomId });
 
     if (!snapshot) {
-      console.log(
-        "Snapshot not found. Available snapshot ids:",
-        snapshots.map((s) => (s && s._id ? String(s._id) : "missing-id"))
-      );
       return res.status(404).json({ error: "Snapshot not found" });
     }
 
     doc.content = snapshot.content || "";
+    doc.updatedAt = new Date();
+    await doc.save();
 
-    doc.activityLogs.push({
+    await ActivityLog.create({
+      roomId,
       type: "restore",
       message: `${restoredBy || "Unknown User"} restored a snapshot`,
       userName: restoredBy || "Unknown User",
@@ -173,21 +187,21 @@ app.post("/api/document/:roomId/restore/:snapshotId", async (req, res) => {
       timestamp: new Date(),
     });
 
-    doc.updatedAt = new Date();
-    await doc.save();
+    const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
+    const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
 
     io.to(roomId).emit("document-updated", {
       content: doc.content,
     });
 
-    io.to(roomId).emit("activity-updated", doc.activityLogs);
-    io.to(roomId).emit("snapshots-updated", doc.snapshots);
+    io.to(roomId).emit("activity-updated", activityLogs);
+    io.to(roomId).emit("snapshots-updated", snapshots);
 
     res.json({
       success: true,
       content: doc.content,
-      snapshots: doc.snapshots,
-      activityLogs: doc.activityLogs,
+      snapshots: snapshots,
+      activityLogs: activityLogs,
     });
   } catch (error) {
     console.error("Restore error full:", error);
@@ -206,32 +220,36 @@ app.post("/api/document/:roomId/reset", async (req, res) => {
     let doc = await getOrCreateDocument(roomId);
 
     doc.content = getDefaultContent();
-    doc.snapshots = [];
-    doc.activityLogs = [
-      {
-        type: "system",
-        message: `${resetBy || "Unknown User"} reset the document`,
-        userName: resetBy || "Unknown User",
-        userColor: resetByColor || "#4F46E5",
-        timestamp: new Date(),
-      },
-    ];
     doc.updatedAt = new Date();
-
     await doc.save();
+
+    await Snapshot.deleteMany({ roomId });
+    await ActivityLog.deleteMany({ roomId });
+
+    await ActivityLog.create({
+      roomId,
+      type: "system",
+      message: `${resetBy || "Unknown User"} reset the document`,
+      userName: resetBy || "Unknown User",
+      userColor: resetByColor || "#4F46E5",
+      timestamp: new Date(),
+    });
+
+    const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
+    const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
 
     io.to(roomId).emit("document-updated", {
       content: doc.content,
     });
 
-    io.to(roomId).emit("snapshots-updated", doc.snapshots);
-    io.to(roomId).emit("activity-updated", doc.activityLogs);
+    io.to(roomId).emit("snapshots-updated", snapshots);
+    io.to(roomId).emit("activity-updated", activityLogs);
 
     res.json({
       success: true,
       content: doc.content,
-      snapshots: doc.snapshots,
-      activityLogs: doc.activityLogs,
+      snapshots: snapshots,
+      activityLogs: activityLogs,
     });
   } catch (error) {
     console.error("Reset error:", error);
@@ -275,16 +293,18 @@ io.on("connection", (socket) => {
       });
 
       const refreshedDoc = await Document.findOne({ roomId });
+      const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
+      const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
 
       socket.emit("initial-document", {
         content: refreshedDoc.content,
-        snapshots: refreshedDoc.snapshots,
-        activityLogs: refreshedDoc.activityLogs,
+        snapshots: snapshots,
+        activityLogs: activityLogs,
         activeUsers: activeUsersByRoom[roomId],
       });
 
       io.to(roomId).emit("users-updated", activeUsersByRoom[roomId]);
-      io.to(roomId).emit("activity-updated", refreshedDoc.activityLogs);
+      io.to(roomId).emit("activity-updated", activityLogs);
     } catch (error) {
       console.error("Join room error:", error);
     }
@@ -313,17 +333,25 @@ io.on("connection", (socket) => {
 
   socket.on("log-edit", async ({ roomId, userName, userColor }) => {
     try {
-      const doc = await addActivity(roomId, {
+      await addActivity(roomId, {
         type: "edit",
         message: `${userName} edited the document`,
         userName,
         userColor: userColor || "#4F46E5",
       });
 
-      io.to(roomId).emit("activity-updated", doc.activityLogs);
+      const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
+      io.to(roomId).emit("activity-updated", activityLogs);
     } catch (error) {
       console.error("Log edit error:", error);
     }
+  });
+
+  socket.on("cursor-move", ({ roomId, userId, cursor }) => {
+    socket.to(roomId).emit("cursor-update", {
+      userId,
+      cursor,
+    });
   });
 
   socket.on("disconnect", async () => {
@@ -338,15 +366,18 @@ io.on("connection", (socket) => {
         io.to(roomId).emit("users-updated", activeUsersByRoom[roomId]);
 
         if (userName) {
-          const doc = await addActivity(roomId, {
+          await addActivity(roomId, {
             type: "leave",
             message: `${userName} left the document`,
             userName,
             userColor: color || "#64748b",
           });
 
-          io.to(roomId).emit("activity-updated", doc.activityLogs);
+          const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
+          io.to(roomId).emit("activity-updated", activityLogs);
         }
+        
+        io.to(roomId).emit("user-left", socket.id);
       }
 
       console.log("User disconnected:", socket.id);
@@ -356,7 +387,7 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
