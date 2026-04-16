@@ -4,11 +4,14 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const { Server } = require("socket.io");
+const { Delta } = require("quill-delta");
 const Document = require("./models/Document");
 const Snapshot = require("./models/Snapshot");
 const ActivityLog = require("./models/ActivityLog");
 
 dotenv.config();
+
+const { initAzure, saveContent, loadContent } = require("./utils/storageService");
 
 const app = express();
 const server = http.createServer(app);
@@ -36,29 +39,93 @@ const io = new Server(server, {
 });
 
 const activeUsersByRoom = {};
+const roomState = new Map();
+// Structure: { content: Delta/String, version: Number, dirty: Boolean, users: Set, accessCache: Set, lastActive: Date }
+
+function applyDelta(currentContentStr, incomingDelta) {
+  try {
+    const base = new Delta(JSON.parse(currentContentStr || '{"ops":[{"insert":"\\n"}]}'));
+    const applied = base.compose(new Delta(incomingDelta));
+    return JSON.stringify(applied);
+  } catch (e) {
+    // Fallback if current content isn't a valid Delta (e.g. plain text / code editor format)
+    return incomingDelta;
+  }
+}
+
+// Master Flush Interval (5s)
+setInterval(async () => {
+  for (const [roomId, state] of roomState.entries()) {
+    if (!state.dirty) continue;
+    state.dirty = false;
+    try {
+      const storageResult = await saveContent(roomId, state.content, false);
+      await Document.updateOne(
+        { roomId },
+        { 
+          $set: { 
+            content: storageResult.data,
+            storageType: storageResult.storageType,
+            blobUrl: storageResult.blobUrl,
+            contentSize: storageResult.contentSize,
+            updatedAt: new Date()
+          } 
+        }
+      );
+    } catch (err) {
+      state.dirty = true;
+      console.error(`Flush failed for room ${roomId}:`, err);
+    }
+  }
+}, 5000);
 
 const { MongoMemoryServer } = require("mongodb-memory-server");
 
-async function connectToDatabase() {
-  try {
-    let mongoUri = process.env.MONGO_URI;
+async function connectToDatabase(retries = 5) {
+  let mongoUri = process.env.MONGO_URI;
 
-    if (!mongoUri || mongoUri.trim() === "") {
-      console.log("No MONGO_URI provided. Starting a localized in-memory MongoDB server...");
-      const mongoServer = await MongoMemoryServer.create();
-      mongoUri = mongoServer.getUri();
-      console.log(`In-memory database successfully started at: ${mongoUri}`);
+  if (!mongoUri || mongoUri.trim() === "") {
+    if (process.env.NODE_ENV === "production") {
+      console.error("CRITICAL: MONGO_URI is missing in production environment!");
+      process.exit(1);
     }
+    console.log("No MONGO_URI provided. Starting a localized in-memory MongoDB server...");
+    const mongoServer = await MongoMemoryServer.create();
+    mongoUri = mongoServer.getUri();
+    console.log(`In-memory database successfully started at: ${mongoUri}`);
+  }
 
-    await mongoose.connect(mongoUri);
-    console.log("MongoDB securely connected!");
-  } catch (err) {
-    console.error("MongoDB connection error:", err.message);
-    process.exit(1);
+  while (retries > 0) {
+    try {
+      await mongoose.connect(mongoUri);
+      console.log("MongoDB securely connected!");
+      
+      // Initialize Azure Storage after DB
+      await initAzure();
+      return;
+    } catch (err) {
+      retries -= 1;
+      console.error(`MongoDB connection error (Attempts left: ${retries}):`, err.message);
+      if (retries === 0) {
+        console.error("CRITICAL: Could not connect to MongoDB. Exiting...");
+        process.exit(1);
+      }
+      // Wait 2 seconds before retry
+      await new Promise(res => setTimeout(res, 2000));
+    }
   }
 }
 
 connectToDatabase();
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    db: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    storage: "azure-ready",
+    timestamp: new Date()
+  });
+});
 
 function getDefaultContent() {
   return "Welcome to DocuSync.\n\nStart editing collaboratively here.\n\nYou can save snapshots and restore them anytime.";
@@ -99,8 +166,12 @@ app.get("/api/document/:roomId", authMiddleware, async (req, res) => {
     const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
     const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
     
+    // Load full content (transparently handles Blob if needed)
+    const fullContent = await loadContent(doc);
+
     res.json({
       ...doc.toObject(),
+      content: fullContent,
       snapshots,
       activityLogs
     });
@@ -114,21 +185,41 @@ app.get("/api/document/:roomId", authMiddleware, async (req, res) => {
 
 app.post("/api/document/:roomId/snapshot", authMiddleware, async (req, res) => {
   try {
-    const { content, savedBy, savedByColor, mode, tag } = req.body;
+    const { content, savedBy, savedByColor, mode, tag, baseVersion, force } = req.body;
     const roomId = req.params.roomId;
 
     const doc = await getDocWithAccess(roomId, req.user.userId);
     const finalContent = typeof content === "string" ? content : "";
 
-    const latestSnapshot = await Snapshot.findOne({ roomId }).sort({ timestamp: -1 });
-    // If auto mode and no structural changes, skip. (If manual, force save).
-    if (latestSnapshot && latestSnapshot.content === finalContent && !tag && mode === "auto") {
-      return res.json({ success: true, message: "No change" });
+    // OCC Guard check and Atomic Update
+    const updatedDoc = await Document.findOneAndUpdate(
+      { _id: doc._id, version: force ? doc.version : baseVersion },
+      {
+        $inc: { version: 1 },
+        $set: { content: finalContent, updatedAt: new Date() }
+      },
+      { new: true }
+    );
+
+    if (!updatedDoc) {
+      return res.status(409).json({
+        conflict: true,
+        serverVersion: doc.version + 1,
+        serverContent: await loadContent(doc),
+        message: "Race condition conflict detected. Another user just saved. Please merge manually."
+      });
     }
 
-    doc.content = finalContent;
-    doc.updatedAt = new Date();
-    await doc.save();
+    // Now push to hybrid storage properly using the validated new document
+    const storageResultDoc = await saveContent(roomId, finalContent, false);
+    
+    updatedDoc.content = storageResultDoc.data;
+    updatedDoc.storageType = storageResultDoc.storageType;
+    updatedDoc.blobUrl = storageResultDoc.blobUrl;
+    updatedDoc.contentSize = storageResultDoc.contentSize;
+    await updatedDoc.save();
+
+    const latestSnapshot = await Snapshot.findOne({ roomId }).sort({ timestamp: -1 });
 
     let aiSummary = "";
     if (latestSnapshot && process.env.GROQ_API_KEY && finalContent !== latestSnapshot.content) {
@@ -168,9 +259,17 @@ app.post("/api/document/:roomId/snapshot", authMiddleware, async (req, res) => {
       aiSummary = "Initial snapshot.";
     }
 
+    // Use Storage Service for hybrid logic
+    const storageResultSnap = await saveContent(roomId, finalContent, true, Date.now());
+
     await Snapshot.create({
       roomId,
-      content: finalContent,
+      content: storageResultSnap.data,
+      storageType: storageResultSnap.storageType,
+      blobUrl: storageResultSnap.blobUrl,
+      contentSize: storageResultSnap.contentSize,
+      version: updatedDoc.version,
+      parentVersion: baseVersion || updatedDoc.version - 1 || 1,
       savedBy: savedBy || "Unknown User",
       savedByColor: savedByColor || "#4F46E5",
       timestamp: new Date(),
@@ -199,8 +298,9 @@ app.post("/api/document/:roomId/snapshot", authMiddleware, async (req, res) => {
 
     io.to(roomId).emit("snapshots-updated", snapshots);
     io.to(roomId).emit("activity-updated", activityLogs);
+    io.to(roomId).emit("document-version-updated", doc.version);
 
-    res.json(doc);
+    res.json({ ...doc.toObject(), newVersion: doc.version });
   } catch (error) {
     if (error.message === "NOT_FOUND") return res.status(404).json({ error: "Document not found" });
     if (error.message === "FORBIDDEN") return res.status(403).json({ error: "Access denied" });
@@ -224,7 +324,13 @@ app.post("/api/document/:roomId/restore/:snapshotId", authMiddleware, async (req
       return res.status(404).json({ error: "Snapshot not found" });
     }
 
-    doc.content = snapshot.content || "";
+    const restoredContent = await loadContent(snapshot, true);
+    const storageResult = await saveContent(roomId, restoredContent);
+
+    doc.content = storageResult.data;
+    doc.storageType = storageResult.storageType;
+    doc.blobUrl = storageResult.blobUrl;
+    doc.contentSize = storageResult.contentSize;
     doc.updatedAt = new Date();
     await doc.save();
 
@@ -326,8 +432,35 @@ io.on("connection", (socket) => {
         }
       }
 
-      // Check access strictly
-      await getDocWithAccess(roomId, verifiedUserId);
+      // Check access strictly. Use Cache if available
+      let hasAccess = false;
+      
+      if (!roomState.has(roomId)) {
+        const d = await getDocWithAccess(roomId, verifiedUserId);
+        const coldContent = await loadContent(d);
+        roomState.set(roomId, {
+          content: coldContent,
+          dirty: false,
+          version: d.version,
+          users: new Set(),
+          accessCache: new Set([verifiedUserId]),
+          lastActive: Date.now()
+        });
+        hasAccess = true;
+      } else {
+        const state = roomState.get(roomId);
+        if (state.accessCache.has(verifiedUserId)) {
+          hasAccess = true;
+        } else {
+          await getDocWithAccess(roomId, verifiedUserId);
+          state.accessCache.add(verifiedUserId);
+          hasAccess = true;
+        }
+      }
+
+      const rState = roomState.get(roomId);
+      rState.users.add(socket.id);
+      rState.lastActive = Date.now();
 
       socket.join(roomId);
       socket.data.roomId = roomId;
@@ -361,12 +494,14 @@ io.on("connection", (socket) => {
       const snapshots = await Snapshot.find({ roomId }).sort({ timestamp: 1 });
       const activityLogs = await ActivityLog.find({ roomId }).sort({ timestamp: 1 });
 
+      const fullContent = await loadContent(refreshedDoc);
+
       socket.emit("initial-document", {
         title: refreshedDoc.title,
         isPublic: refreshedDoc.isPublic,
         ownerId: refreshedDoc.ownerId ? refreshedDoc.ownerId.toString() : null,
         type: refreshedDoc.type,
-        content: refreshedDoc.content,
+        content: fullContent,
         snapshots: snapshots,
         activityLogs: activityLogs,
         activeUsers: activeUsersByRoom[roomId],
@@ -380,32 +515,24 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-changes", async ({ roomId, content, userName, token }) => {
+  socket.on("send-changes", ({ roomId, content, userName, token }) => {
     try {
-      let verifiedUserId = null;
-      if (token) {
-        try {
-          const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback_secret_for_dev_mode");
-          verifiedUserId = decoded.userId;
-        } catch (e) {}
-      }
-      // Re-verify on edit to ensure security persists
-      await getDocWithAccess(roomId, verifiedUserId);
+      const state = roomState.get(roomId);
+      if (!state) return;
+      
+      // Simple loop/auth guard via state users cache
+      if (!state.users.has(socket.id)) return;
+
+      // Apply Delta dynamically (fallback if string overrides)
+      state.content = applyDelta(state.content, content);
+      state.dirty = true;
+      state.lastActive = Date.now();
 
       socket.to(roomId).emit("receive-changes", {
         content,
         userName,
       });
 
-      await Document.findOneAndUpdate(
-        { roomId },
-        {
-          $set: {
-            content,
-            updatedAt: new Date(),
-          },
-        }
-      );
     } catch (error) {
       console.error("Send changes error:", error);
     }

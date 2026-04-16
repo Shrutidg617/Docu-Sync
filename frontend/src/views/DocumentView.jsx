@@ -6,6 +6,7 @@ import Sidebar from '../components/Sidebar';
 import DiffViewer from '../components/DiffViewer';
 import ReplayViewer from '../components/ReplayViewer';
 import AnalyticsModal from '../components/AnalyticsModal';
+import ConflictModal from '../components/ConflictModal';
 import { useSocket } from '../hooks/useSocket';
 import { useDocument } from '../hooks/useDocument';
 import { useAutosave } from '../hooks/useAutosave';
@@ -50,7 +51,12 @@ function DocumentView() {
     updateContent,
     sendCursorMove,
     lastSnapshotContentRef,
+    baseVersionRef,
+    isLocalDirtyRef,
+    setContent
   } = useDocument(socket, roomId, userName, userColor, token);
+
+  const [conflictData, setConflictData] = useState(null);
 
   // Allow Header to optimistically update the title and visibility in meta without a full reload
   const [localTitle, setLocalTitle] = useState(null);
@@ -61,8 +67,12 @@ function DocumentView() {
     ...(localVisibility != null ? { isPublic: localVisibility } : {}),
   };
 
+  const handleConflict = useCallback((data) => {
+    setConflictData(data);
+  }, []);
+
   const { saveSnapshot, savingSnapshot, autoSaveMessage } = useAutosave(
-    API_URL, content, roomId, userName, userColor, lastSnapshotContentRef, token
+    API_URL, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef
   );
 
   const [restoringSnapshotId, setRestoringSnapshotId] = useState('');
@@ -94,7 +104,12 @@ function DocumentView() {
     };
   }, [isResizing]);
 
-  const handleManualSnapshot = async (tag = '') => saveSnapshot(content, 'manual', tag);
+  const handleManualSnapshot = async (tag = '') => {
+    const result = await saveSnapshot(content, 'manual', tag);
+    if (result && result.conflict) {
+      setConflictData(result.data);
+    }
+  };
 
   const handleRestoreSnapshot = async (snapshotId) => {
     try {
@@ -151,26 +166,17 @@ function DocumentView() {
         </div>
 
         {sidebarVisible && (
-          <>
-            <div 
-              className={`resizer-handle ${isResizing ? 'is-resizing' : ''}`}
-              onMouseDown={startResizing}
-            >
-              <div className="resizer-line" />
-            </div>
-
-            <div className="sidebar-wrapper" style={{ width: sidebarWidth }}>
-              <Sidebar
-                snapshots={snapshots}
-                activityLogs={activityLogs}
-                onRestoreSnapshot={handleRestoreSnapshot}
-                restoringSnapshotId={restoringSnapshotId}
-                setSelectedSnapshot={setSelectedSnapshot}
-                selectedSnapshot={selectedSnapshot}
-                onOpenReplay={() => setReplayOpen(true)}
-              />
-            </div>
-          </>
+          <div className="sidebar-wrapper" style={{ width: '360px' }}>
+            <Sidebar
+              snapshots={snapshots}
+              activityLogs={activityLogs}
+              onRestoreSnapshot={handleRestoreSnapshot}
+              restoringSnapshotId={restoringSnapshotId}
+              setSelectedSnapshot={setSelectedSnapshot}
+              selectedSnapshot={selectedSnapshot}
+              onOpenReplay={() => setReplayOpen(true)}
+            />
+          </div>
         )}
       </div>
 
@@ -197,6 +203,25 @@ function DocumentView() {
         <AnalyticsModal 
           activityLogs={activityLogs}
           onClose={() => setAnalyticsOpen(false)}
+        />
+      )}
+
+      {conflictData && (
+        <ConflictModal
+          serverVersion={conflictData.serverVersion}
+          serverContent={conflictData.serverContent}
+          localContent={content}
+          onAcceptMine={async () => {
+            const result = await saveSnapshot(content, "manual", "", conflictData.serverVersion, true);
+            if (!result?.conflict) setConflictData(null);
+          }}
+          onAcceptTheirs={() => {
+            setContent(conflictData.serverContent);
+            lastSnapshotContentRef.current = conflictData.serverContent;
+            baseVersionRef.current = conflictData.serverVersion;
+            setConflictData(null);
+          }}
+          onCancel={() => setConflictData(null)}
         />
       )}
     </div>

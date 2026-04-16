@@ -92,7 +92,8 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
       const fullDelta = q.getContents();
       const stringified = JSON.stringify(fullDelta);
       lastRemoteContent.current = stringified; // identify as "known" to prevent prop-feedback loop
-      onChangeRef.current(stringified);
+      // Send BOTH the full stringified document AND the isolated delta change
+      onChangeRef.current(stringified, delta);
     });
 
     return () => {
@@ -132,17 +133,26 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
 
       isRemoteRef.current = true;
       try {
-        const incoming = JSON.parse(data.content);
-        const current  = JSON.stringify(q.getContents());
-        if (JSON.stringify(incoming) !== current) {
-          const sel = q.getSelection();
-          q.setContents(incoming, 'silent');
-          if (sel) q.setSelection(sel, 'silent');
+        const incoming = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
+        
+        // If it's a pure diff Delta (has ops but is not a full doc length), it's from the new OT system!
+        if (incoming.ops && incoming.ops.length > 0 && !data.isFullDoc) {
+             q.updateContents(incoming, 'silent');
+        } else {
+             // Fallback to full doc replacement
+             const current = JSON.stringify(q.getContents());
+             if (JSON.stringify(incoming) !== current) {
+               const sel = q.getSelection();
+               q.setContents(incoming, 'silent');
+               if (sel) q.setSelection(sel, 'silent');
+             }
         }
+        
+        lastRemoteContent.current = JSON.stringify(q.getContents());
       } catch {
         q.setText(data.content || '', 'silent');
+        lastRemoteContent.current = data.content;
       }
-      lastRemoteContent.current = data.content;
       isRemoteRef.current = false;
     };
 

@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@azure/storage-blob": "^12.31.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "diff": "^9.0.0",
@@ -21,6 +22,8 @@
     "mongodb-memory-server": "^11.0.1",
     "mongoose": "^9.4.1",
     "nanoid": "^3.3.11",
+    "node-cache": "^5.1.2",
+    "quill-delta": "^5.1.0",
     "socket.io": "^4.8.3"
   }
 }

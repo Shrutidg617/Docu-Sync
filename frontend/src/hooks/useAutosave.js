@@ -1,17 +1,18 @@
 import { useState, useRef, useEffect } from "react";
+import { diff_match_patch } from "diff-match-patch";
 
-export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSnapshotContentRef, token) => {
+export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef) => {
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const [autoSaveMessage, setAutoSaveMessage] = useState("Auto Snapshot On");
   
   const autoSaveTimerRef = useRef(null);
   const autoSaveMessageTimerRef = useRef(null);
 
-  const saveSnapshot = async (contentToSave, mode = "manual", tag = "") => {
+  const saveSnapshot = async (contentToSave, mode = "manual", tag = "", overrideBaseVersion = null, force = false) => {
     const isAuto = mode === "auto";
 
     if (!contentToSave.trim()) return;
-    if (contentToSave === lastSnapshotContentRef.current && !tag) return;
+    if (contentToSave === lastSnapshotContentRef.current && !tag && !force) return;
 
     try {
       if (!isAuto) setSavingSnapshot(true);
@@ -28,16 +29,41 @@ export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSn
           savedByColor: userColor,
           mode,
           tag,
+          baseVersion: overrideBaseVersion || baseVersionRef.current,
+          force
         }),
       });
 
       const data = await res.json();
+
+      if (res.status === 409) {
+        const conflictData = data;
+        const dmp = new diff_match_patch();
+        const patches = dmp.patch_make(lastSnapshotContentRef.current, contentToSave);
+        const [mergedContent, successArray] = dmp.patch_apply(patches, conflictData.serverContent);
+        
+        if (!successArray.includes(false)) {
+          // Auto merge successful
+          return saveSnapshot(mergedContent, mode, tag, conflictData.serverVersion, true);
+        } else {
+          // Unresolvable conflict
+          if (isAuto) {
+            setAutoSaveMessage("Merge Conflict!");
+            return;
+          }
+          if (handleConflict) {
+            handleConflict(conflictData);
+          }
+          return { conflict: true, data: conflictData };
+        }
+      }
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to save snapshot");
       }
 
       lastSnapshotContentRef.current = contentToSave;
+      if (isLocalDirtyRef) isLocalDirtyRef.current = false; // Reset the loop flag!
 
       if (isAuto) {
         setAutoSaveMessage("Auto Snapshot Saved");
@@ -60,8 +86,11 @@ export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSn
   useEffect(() => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     
-    // Using 6000ms delay internally for the Docu-Sync autosave as was custom in App.jsx
+    // Check if the content is dirty relative to the last snapshot
     if (content !== lastSnapshotContentRef.current) {
+        // Only trigger an autosave timer if the local user is the one who made the edit
+        if (isLocalDirtyRef && !isLocalDirtyRef.current) return;
+
         autoSaveTimerRef.current = setTimeout(() => {
             saveSnapshot(content, "auto");
         }, 6000);
@@ -70,7 +99,7 @@ export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSn
     return () => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     }
-  }, [content, apiUrl, roomId, userName, userColor]);
+  }, [content, apiUrl, roomId, userName, userColor, isLocalDirtyRef]);
 
   return { savereference: saveSnapshot, saveSnapshot, savingSnapshot, autoSaveMessage };
 };

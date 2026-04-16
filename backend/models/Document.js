@@ -13,6 +13,10 @@ const DocumentSchema = new mongoose.Schema(
       default:
         "Welcome to DocuSync.\n\nStart editing collaboratively here.\n\nYou can save snapshots and restore them anytime.",
     },
+    storageType: { type: String, enum: ["mongodb", "azure"], default: "mongodb" },
+    blobUrl: { type: String, default: null },
+    contentSize: { type: Number, default: 0 },
+    version: { type: Number, default: 1 },
     updatedAt: { type: Date, default: Date.now },
   },
   { versionKey: false }

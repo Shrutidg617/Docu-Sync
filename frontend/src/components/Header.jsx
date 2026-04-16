@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Users, Share2, Plus, Info } from 'lucide-react';
 
 function Header({
   activeUsers,
@@ -164,7 +165,7 @@ function Header({
                     color: isPublic ? '#166534' : '#991b1b',
                   }}
                 >
-                  {isPublic ? '🌎 Public' : '🔒 Private'}
+                  {isPublic ? 'Public' : 'Private'}
                 </button>
               </>
             )}
@@ -173,33 +174,49 @@ function Header({
       </div>
 
       <div className="topbar-right">
-        <button 
-          className="secondary-btn" 
+        <button
+          className="secondary-btn"
           onClick={onOpenAnalytics}
           style={{ minHeight: '30px', fontSize: '12px' }}
         >
-          📊 Analytics
+          Analytics
         </button>
 
-        <div className="header-pill auto-pill">{autoSaveMessage}</div>
-
-        <div className="user-badges">
-          {activeUsers && activeUsers.map((user) => (
-            <span className="user-badge" key={user.socketId} style={{ borderColor: user.color }}>
-              <span className="user-badge-dot" style={{ backgroundColor: user.color }} />
-              {user.userName}
-            </span>
-          ))}
+        {/* Presence Info */}
+        <div className="presence-info">
+          <Users size={16} />
+          <span>{activeUsers.length} Online</span>
         </div>
 
-        <div className="current-user-pill">You: <strong>{currentUser.userName}</strong></div>
+        {/* Avatar Stack */}
+        <div className="user-avatar-stack">
+          {activeUsers.slice(0, 5).map((user) => (
+            <div
+              key={user.socketId}
+              className="avatar"
+              style={{ backgroundColor: user.color }}
+              title={user.userName}
+            >
+              {user.userName.charAt(0).toUpperCase()}
+            </div>
+          ))}
+          {activeUsers.length > 5 && (
+            <div className="avatar avatar-overflow" title={`${activeUsers.length - 5} more users`}>
+              +{activeUsers.length - 5}
+            </div>
+          )}
+        </div>
+
+        <div className="current-user-pill">
+          <strong>{currentUser.userName}</strong> (You)
+        </div>
 
         <div style={{ position: 'relative', display: 'flex' }}>
           <button className="primary-btn" onClick={() => onSaveSnapshot('')} disabled={savingSnapshot} style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}>
             {savingSnapshot ? 'Saving...' : 'Save Snapshot'}
           </button>
-          <button 
-            className="primary-btn" 
+          <button
+            className="primary-btn"
             style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: '1px solid rgba(255,255,255,0.2)', padding: '0 8px' }}
             onClick={() => {
               const tag = window.prompt("Enter a tag for this version (e.g. v1.0, Final Review):");

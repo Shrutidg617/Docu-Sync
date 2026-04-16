@@ -8,6 +8,8 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
   const [activityLogs, setActivityLogs] = useState([]);
   const [lastEditedBy, setLastEditedBy] = useState("");
   const [remoteCursors, setRemoteCursors] = useState({});
+  const baseVersionRef = useRef(1);
+  const isLocalDirtyRef = useRef(false);
 
   const editTimeoutRef = useRef(null);
   const logTimeoutRef = useRef(null);
@@ -40,13 +42,23 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
         ownerId: data.ownerId,
         type: data.type || 'text',
       });
+      baseVersionRef.current = data.version || 1;
+    };
+
+    const handleVersionUpdated = (newVersion) => {
+      baseVersionRef.current = newVersion;
     };
 
     const handleReceiveChanges = (data) => {
-      // Update React state so PlainEditor (code/notes) re-renders with new content.
-      // RichEditor handles its own deduplication via its internal isRemoteRef.
-      setContent(data.content || '');
-      setLastEditedBy(data.userName || '');
+      // Clear lastEditedBy to enable Autosave Thundering Herd fix
+      setLastEditedBy('');
+
+      // Do NOT blind-overwrite content if it's an OT Delta diff. 
+      // RichEditor internal sync (`applyRemoteContent` listener) handles updates.
+      // We only blind-set if data is a full document update (PlainEditor fallback).
+      if (typeof data.content === 'string') {
+          setContent(data.content || '');
+      }
     };
 
     const handleUsersUpdated = (users) => {
@@ -102,6 +114,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
     socket.on("document-meta-updated", handleDocumentMetaUpdated);
     socket.on("cursor-update", handleCursorUpdate);
     socket.on("user-left", handleUserLeft);
+    socket.on("document-version-updated", handleVersionUpdated);
 
     return () => {
       socket.off("initial-document", handleInitialDocument);
@@ -113,6 +126,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       socket.off("document-meta-updated", handleDocumentMetaUpdated);
       socket.off("cursor-update", handleCursorUpdate);
       socket.off("user-left", handleUserLeft);
+      socket.off("document-version-updated", handleVersionUpdated);
       
       if (editTimeoutRef.current) clearTimeout(editTimeoutRef.current);
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
@@ -121,15 +135,22 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
     };
   }, [socket]);
 
-  const updateContent = (newContent) => {
+  const updateContent = (newContent, diffDelta = null) => {
     setContent(newContent);
     setLastEditedBy(userName);
+    isLocalDirtyRef.current = true;
 
     if (socket) {
       // 300ms debounce to prevent socket spam
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
-        socket.emit('send-changes', { roomId, content: newContent, userName, token });
+        // Emit the delta if available (RichEditor), else fallback to full string (PlainEditor)
+        socket.emit('send-changes', { 
+            roomId, 
+            content: diffDelta || newContent, 
+            userName, 
+            token 
+        });
       }, 100);
 
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
@@ -173,6 +194,8 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
     updateContent,
     sendCursorMove,
     lastSnapshotContentRef,
+    baseVersionRef,
+    isLocalDirtyRef,
     setSnapshots,
     setActivityLogs,
     setContent

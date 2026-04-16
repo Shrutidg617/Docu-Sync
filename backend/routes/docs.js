@@ -6,6 +6,7 @@ const Snapshot = require('../models/Snapshot');
 const ActivityLog = require('../models/ActivityLog');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
+const { saveContent, deleteAllBlobs } = require('../utils/storageService');
 
 // Protect all routes
 router.use(authMiddleware);
@@ -42,13 +43,18 @@ router.post('/create', async (req, res) => {
       ? JSON.stringify({ ops: [{ insert: "Welcome to DocuSync!\n" }] })
       : "Welcome to DocuSync!\n\nStart editing collaboratively here.";
 
+    const storageResult = await saveContent(roomId, defaultContent);
+
     const newDoc = await Document.create({
       roomId,
       ownerId: req.user.userId,
       title: "Untitled Document",
       isPublic: false,
       type: docType,
-      content: defaultContent,
+      content: storageResult.data,
+      storageType: storageResult.storageType,
+      blobUrl: storageResult.blobUrl,
+      contentSize: storageResult.contentSize
     });
 
     res.status(201).json(newDoc);
@@ -166,7 +172,8 @@ router.delete('/:roomId', async (req, res) => {
     await Promise.all([
       Document.deleteOne({ _id: doc._id }),
       Snapshot.deleteMany({ roomId: req.params.roomId }),
-      ActivityLog.deleteMany({ roomId: req.params.roomId })
+      ActivityLog.deleteMany({ roomId: req.params.roomId }),
+      deleteAllBlobs(req.params.roomId) // Clean up Azure storage
     ]);
 
     res.json({ success: true, message: 'Document deleted successfully' });

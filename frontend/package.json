@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "diff": "^9.0.0",
+    "diff-match-patch": "^1.0.5",
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^1.8.0",
     "quill": "^2.0.3",
