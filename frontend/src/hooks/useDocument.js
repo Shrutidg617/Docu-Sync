@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from "react";
 
 export const useDocument = (socket, roomId, userName, userColor) => {
   const [documentMeta, setDocumentMeta] = useState({ title: 'Untitled Document', isPublic: false, ownerId: null, type: 'text' });
-  const [content, setContent] = useState("");
+  const [pages, setPages] = useState({ main: "" });
+  const [activePageId, setActivePageId] = useState("main");
+  const [pageActivity, setPageActivity] = useState({}); // { [pageId]: { [userName]: Date } }
   const [activeUsers, setActiveUsers] = useState([]);
   const [snapshots, setSnapshots] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
@@ -19,7 +21,15 @@ export const useDocument = (socket, roomId, userName, userColor) => {
     if (!socket) return;
 
     const handleInitialDocument = (data) => {
-      setContent(data.content || "");
+      let parsedPages = { main: data.content || "" };
+      try {
+        const p = JSON.parse(data.content);
+        if (p && typeof p === 'object' && Object.keys(p).length > 0 && typeof p.main === 'string') {
+          parsedPages = p;
+        }
+      } catch {}
+      setPages(parsedPages);
+      setActivePageId(prev => parsedPages[prev] !== undefined ? prev : Object.keys(parsedPages)[0]);
       setSnapshots(data.snapshots || []);
       setActivityLogs(data.activityLogs || []);
       setActiveUsers(data.activeUsers || []);
@@ -46,6 +56,25 @@ export const useDocument = (socket, roomId, userName, userColor) => {
       baseVersionRef.current = newVersion;
     };
 
+    const handleReceiveChanges = (data) => {
+      // Clear lastEditedBy to enable Autosave Thundering Herd fix
+      setLastEditedBy('');
+
+      // Show warning for concurrent typers
+      if (data.pageId && data.userName && data.userName !== userName) {
+        setPageActivity(prev => ({
+          ...prev,
+          [data.pageId]: { ...prev[data.pageId], [data.userName]: Date.now() }
+        }));
+      }
+
+      if (typeof data.content === 'string') {
+        const pid = data.pageId || 'main';
+        setPages(prev => ({ ...prev, [pid]: data.content }));
+      }
+    };
+
+
     const handleUsersUpdated = (users) => {
       setActiveUsers(users || []);
     };
@@ -64,7 +93,14 @@ export const useDocument = (socket, roomId, userName, userColor) => {
 
     const handleDocumentUpdated = (data) => {
       if (!data || data.content === undefined) return;
-      setContent(data.content || '');
+      let parsedPages = { main: data.content || "" };
+      try {
+        const p = JSON.parse(data.content);
+        if (p && typeof p === 'object' && Object.keys(p).length > 0 && typeof p.main === 'string') {
+          parsedPages = p;
+        }
+      } catch {}
+      setPages(parsedPages);
       setLastEditedBy(''); // clear banner on restore
     };
 
@@ -117,12 +153,24 @@ export const useDocument = (socket, roomId, userName, userColor) => {
     };
   }, [socket]);
 
-  const updateContent = (newContent) => {
-    setContent(newContent);
+  const updateContent = (pageId, newContent, diffDelta = null) => {
+    setPages(prev => ({ ...prev, [pageId]: newContent }));
     setLastEditedBy(userName);
     isLocalDirtyRef.current = true;
 
     if (socket) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        socket.emit('send-changes', { 
+            roomId, 
+            pageId,
+            content: diffDelta || newContent, 
+            userName, 
+            token,
+            baseVersion: baseVersionRef.current
+        });
+      }, 100);
+
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
       logTimeoutRef.current = setTimeout(() => {
         socket.emit('log-edit', { roomId, userName, userColor });
@@ -132,6 +180,31 @@ export const useDocument = (socket, roomId, userName, userColor) => {
     if (editTimeoutRef.current) clearTimeout(editTimeoutRef.current);
     editTimeoutRef.current = setTimeout(() => setLastEditedBy(''), 1800);
   };
+  
+  // Cleanup page activity warnings after 3s
+  useEffect(() => {
+    const i = setInterval(() => {
+      const now = Date.now();
+      setPageActivity(prev => {
+        let changed = false;
+        const next = { ...prev };
+        for (const pid in next) {
+          for (const un in next[pid]) {
+            if (now - next[pid][un] > 3000) {
+              delete next[pid][un];
+              changed = true;
+            }
+          }
+          if (Object.keys(next[pid]).length === 0) {
+             delete next[pid];
+             changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(i);
+  }, []);
 
   const sendCursorMove = (position) => {
     if (!socket) return;
@@ -155,7 +228,11 @@ export const useDocument = (socket, roomId, userName, userColor) => {
 
   return {
     documentMeta,
-    content,
+    pages,
+    activePageId,
+    setActivePageId,
+    setPages,
+    pageActivity,
     snapshots,
     activityLogs,
     activeUsers,
@@ -168,6 +245,5 @@ export const useDocument = (socket, roomId, userName, userColor) => {
     isLocalDirtyRef,
     setSnapshots,
     setActivityLogs,
-    setContent
   };
 };

@@ -41,7 +41,7 @@ const io = new Server(server, {
 
 const activeUsersByRoom = {};
 const roomState = new Map();
-// Structure: { content: Delta/String, version: Number, dirty: Boolean, users: Set, accessCache: Set, lastActive: Date, cleanupTimer: Timeout|null }
+// Structure: { pages: { [pageId]: String }, dirty: Boolean, version: Number, users: Set, accessCache: Set, lastActive: Date, cleanupTimer: Timeout|null }
 
 function scheduleRoomCleanup(roomId, state) {
   if (!state) return;
@@ -68,7 +68,8 @@ setInterval(async () => {
     if (!state.dirty) continue;
     state.dirty = false;
     try {
-      const storageResult = await saveContent(roomId, state.content, false);
+      const payloadToSave = JSON.stringify(state.pages);
+      const storageResult = await saveContent(roomId, payloadToSave, false);
       await Document.updateOne(
         { roomId },
         { 
@@ -459,8 +460,17 @@ io.on("connection", (socket) => {
       if (!roomState.has(roomId)) {
         const d = await getDocWithAccess(roomId, verifiedUserId);
         const coldContent = await loadContent(d);
+        
+        let parsedPages;
+        try {
+          parsedPages = JSON.parse(coldContent);
+          if (typeof parsedPages !== 'object' || !parsedPages.main) throw new Error();
+        } catch {
+          parsedPages = { "main": coldContent || "" };
+        }
+
         roomState.set(roomId, {
-          content: coldContent,
+          pages: parsedPages,
           dirty: false,
           version: d.version,
           users: new Set(),
@@ -538,6 +548,37 @@ io.on("connection", (socket) => {
       socket.emit("join-error", { error: "Access denied or document missing" });
     }
   });
+
+  socket.on("send-changes", ({ roomId, pageId = "main", content, userName, token, baseVersion = 0 }) => {
+    try {
+      const state = roomState.get(roomId);
+      if (!state) return;
+      
+      // Simple loop/auth guard via state users cache
+      if (!state.users.has(socket.id)) return;
+
+      if (baseVersion < state.version) {
+        console.warn(`[Guardrail] Dropping stale payload from ${userName}. Client: ${baseVersion}, Server: ${state.version}`);
+        socket.emit("server-resync", { content: state.content, version: state.version });
+        return;
+      }
+
+      // Apply Delta dynamically (fallback if string overrides)
+      state.pages[pageId] = applyDelta(state.pages[pageId], content);
+      state.dirty = true;
+      state.lastActive = Date.now();
+
+      socket.to(roomId).emit("receive-changes", {
+        pageId,
+        content,
+        userName,
+      });
+
+    } catch (error) {
+      console.error("Send changes error:", error);
+    }
+  });
+
 
   socket.on("log-edit", async ({ roomId, userName, userColor }) => {
     try {

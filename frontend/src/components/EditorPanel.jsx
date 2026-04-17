@@ -212,6 +212,7 @@ function PlainEditor({ content, onChange, remoteCursors, sendCursorMove, placeho
 
 // ─── Main EditorPanel ────────────────────────────────────────────────────────
 function EditorPanel({
+  pages, activePageId, onPageChange, onAddPage, pageActivity,
   content, onChange, lastEditedBy,
   remoteCursors, sendCursorMove,
   docType = 'text', docTitle = 'Document',
@@ -280,7 +281,7 @@ function EditorPanel({
           <h3>Shared Document</h3>
           <span className="type-badge" style={{ background: typeBadge.bg, color: typeBadge.color }}>{docType}</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -308,9 +309,9 @@ function EditorPanel({
               </div>
             )}
           </div>
-          <div className="live-indicator"><span className="live-dot" />Live Sync</div>
-          <button 
-            className="secondary-btn" 
+          {/* Removed Live Sync */}
+          <button
+            className="secondary-btn"
             style={{ minHeight: 30, fontSize: 12 }}
             onClick={onToggleSidebar}
           >
@@ -319,32 +320,68 @@ function EditorPanel({
         </div>
       </div>
 
-      {lastEditedBy
-        ? <div className="edited-banner">{lastEditedBy} is making changes</div>
-        : <div className="edited-banner muted">Everyone is synced</div>}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* Left 'Document Tabs' Sidebar */}
+        {docType === 'text' && pages && (
+          <div style={{ width: 220, minWidth: 220, flexShrink: 0, borderRight: '1px solid #e5e7eb', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#475569', whiteSpace: 'nowrap' }}>Document tabs</span>
+              <button title="Add Tab" onClick={() => onAddPage(`page-${Date.now()}`)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 18, color: '#475569', padding: '0 4px', flexShrink: 0 }}>+</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', overflowX: 'hidden' }}>
+              {Object.keys(pages).map((pId, index) => (
+                <div key={pId} onClick={() => onPageChange(pId)} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer',
+                  background: activePageId === pId ? '#EEF2FF' : 'transparent',
+                  color: activePageId === pId ? '#4F46E5' : '#1e293b',
+                  borderRadius: 24, transition: 'all 0.15s'
+                }}>
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>📄</span>
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Tab {index + 1}</span>
+                  <span style={{ color: '#94a3b8', flexShrink: 0 }}>⋮</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-      {docType === 'text' ? (
-        <RichEditor
-          ref={richEditorRef}
-          content={content}
-          onChange={onChange}
-          remoteCursors={remoteCursors}
-          socket={socket}
-          roomId={roomId}
-          userName={userName}
-          userColor={userColor}
-            token={token}
-        />
-      ) : (
-        <PlainEditor
-          content={content}
-          onChange={onChange}
-          remoteCursors={remoteCursors}
-          sendCursorMove={sendCursorMove}
-          isCode={docType === 'code'}
-          placeholder={docType === 'code' ? '// Start coding...' : 'Write your notes...'}
-        />
-      )}
+        {/* Right Editor Content */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', minWidth: 0, overflow: 'hidden' }}>
+          {pageActivity && pageActivity[activePageId] && Object.keys(pageActivity[activePageId]).length > 0 && (
+             <div style={{ padding: '8px 24px', background: '#FEF08A', color: '#854D0E', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                ⚠️ <span><strong>{Object.keys(pageActivity[activePageId]).join(', ')}</strong> {Object.keys(pageActivity[activePageId]).length > 1 ? 'are' : 'is'} currently typing on this tab.</span>
+             </div>
+          )}
+
+          {lastEditedBy
+            ? <div className="edited-banner">{lastEditedBy} is making changes</div>
+            : <div className="edited-banner muted">Everyone is synced</div>}
+
+          {docType === 'text' ? (
+            <RichEditor
+              ref={richEditorRef}
+              content={content}
+              onChange={onChange}
+              remoteCursors={remoteCursors}
+              socket={socket}
+              roomId={roomId}
+              userName={userName}
+              userColor={userColor}
+              token={token}
+            />
+          ) : (
+            <PlainEditor
+              content={content}
+              onChange={onChange}
+              remoteCursors={remoteCursors}
+              sendCursorMove={sendCursorMove}
+              isCode={docType === 'code'}
+              placeholder={docType === 'code' ? '// Start coding...' : 'Write your notes...'}
+            />
+          )}
+        </div>
+      </div>
+
     </section>
   );
 }
