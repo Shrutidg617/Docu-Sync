@@ -128,6 +128,11 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       }));
     };
 
+    const handleServerResync = (data) => {
+      setContent(data.content);
+      baseVersionRef.current = data.version;
+    };
+
     socket.on("initial-document", handleInitialDocument);
     socket.on("receive-changes", handleReceiveChanges);
     socket.on("users-updated", handleUsersUpdated);
@@ -138,6 +143,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
     socket.on("cursor-update", handleCursorUpdate);
     socket.on("user-left", handleUserLeft);
     socket.on("document-version-updated", handleVersionUpdated);
+    socket.on("server-resync", handleServerResync);
 
     return () => {
       socket.off("initial-document", handleInitialDocument);
@@ -150,6 +156,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       socket.off("cursor-update", handleCursorUpdate);
       socket.off("user-left", handleUserLeft);
       socket.off("document-version-updated", handleVersionUpdated);
+      socket.off("server-resync", handleServerResync);
       
       if (editTimeoutRef.current) clearTimeout(editTimeoutRef.current);
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
@@ -171,7 +178,8 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
             pageId,
             content: diffDelta || newContent, 
             userName, 
-            token 
+            token,
+            baseVersion: baseVersionRef.current
         });
       }, 100);
 

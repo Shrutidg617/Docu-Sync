@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { diff_match_patch } from "diff-match-patch";
 
-export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef) => {
+export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef, socket) => {
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const [autoSaveMessage, setAutoSaveMessage] = useState("Auto Snapshot On");
+  const [isCoordinator, setIsCoordinator] = useState(false);
   
   const autoSaveTimerRef = useRef(null);
   const autoSaveMessageTimerRef = useRef(null);
@@ -11,6 +12,7 @@ export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSn
   const saveSnapshot = async (contentToSave, mode = "manual", tag = "", overrideBaseVersion = null, force = false) => {
     const isAuto = mode === "auto";
 
+    if (isAuto && !isCoordinator) return;
     if (!contentToSave.trim()) return;
     if (contentToSave === lastSnapshotContentRef.current && !tag && !force) return;
 
@@ -99,7 +101,16 @@ export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSn
     return () => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     }
-  }, [content, apiUrl, roomId, userName, userColor, isLocalDirtyRef]);
+  }, [content, apiUrl, roomId, userName, userColor, isLocalDirtyRef, isCoordinator]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleCoordinator = (coordinatorId) => {
+      setIsCoordinator(socket.id === coordinatorId);
+    };
+    socket.on("coordinator-assigned", handleCoordinator);
+    return () => socket.off("coordinator-assigned", handleCoordinator);
+  }, [socket]);
 
   return { savereference: saveSnapshot, saveSnapshot, savingSnapshot, autoSaveMessage };
 };
