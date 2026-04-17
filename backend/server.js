@@ -40,7 +40,7 @@ const io = new Server(server, {
 
 const activeUsersByRoom = {};
 const roomState = new Map();
-// Structure: { content: Delta/String, version: Number, dirty: Boolean, users: Set, accessCache: Set, lastActive: Date }
+// Structure: { pages: { [pageId]: String }, dirty: Boolean, version: Number, users: Set, accessCache: Set, lastActive: Date }
 
 function applyDelta(currentContentStr, incomingDelta) {
   try {
@@ -59,7 +59,8 @@ setInterval(async () => {
     if (!state.dirty) continue;
     state.dirty = false;
     try {
-      const storageResult = await saveContent(roomId, state.content, false);
+      const payloadToSave = JSON.stringify(state.pages);
+      const storageResult = await saveContent(roomId, payloadToSave, false);
       await Document.updateOne(
         { roomId },
         { 
@@ -439,8 +440,17 @@ io.on("connection", (socket) => {
       if (!roomState.has(roomId)) {
         const d = await getDocWithAccess(roomId, verifiedUserId);
         const coldContent = await loadContent(d);
+        
+        let parsedPages;
+        try {
+          parsedPages = JSON.parse(coldContent);
+          if (typeof parsedPages !== 'object' || !parsedPages.main) throw new Error();
+        } catch {
+          parsedPages = { "main": coldContent || "" };
+        }
+
         roomState.set(roomId, {
-          content: coldContent,
+          pages: parsedPages,
           dirty: false,
           version: d.version,
           users: new Set(),
@@ -516,7 +526,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-changes", ({ roomId, content, userName, token }) => {
+  socket.on("send-changes", ({ roomId, pageId = "main", content, userName, token }) => {
     try {
       const state = roomState.get(roomId);
       if (!state) return;
@@ -525,11 +535,12 @@ io.on("connection", (socket) => {
       if (!state.users.has(socket.id)) return;
 
       // Apply Delta dynamically (fallback if string overrides)
-      state.content = applyDelta(state.content, content);
+      state.pages[pageId] = applyDelta(state.pages[pageId], content);
       state.dirty = true;
       state.lastActive = Date.now();
 
       socket.to(roomId).emit("receive-changes", {
+        pageId,
         content,
         userName,
       });

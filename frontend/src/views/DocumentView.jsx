@@ -44,7 +44,10 @@ function DocumentView() {
 
   const {
     documentMeta,
-    content,
+    pages,
+    activePageId,
+    setActivePageId,
+    pageActivity,
     snapshots,
     activityLogs,
     activeUsers,
@@ -55,9 +58,10 @@ function DocumentView() {
     lastSnapshotContentRef,
     baseVersionRef,
     isLocalDirtyRef,
-    setContent
+    setPages
   } = useDocument(socket, roomId, userName, userColor, token);
 
+  const fullContentStr = useMemo(() => JSON.stringify(pages), [pages]);
   const [conflictData, setConflictData] = useState(null);
 
   // Allow Header to optimistically update the title and visibility in meta without a full reload
@@ -74,7 +78,7 @@ function DocumentView() {
   }, []);
 
   const { saveSnapshot, savingSnapshot, autoSaveMessage } = useAutosave(
-    API_URL, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef
+    API_URL, fullContentStr, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef
   );
 
   const [restoringSnapshotId, setRestoringSnapshotId] = useState('');
@@ -107,7 +111,7 @@ function DocumentView() {
   }, [isResizing]);
 
   const handleManualSnapshot = async (tag = '') => {
-    const result = await saveSnapshot(content, 'manual', tag);
+    const result = await saveSnapshot(fullContentStr, 'manual', tag);
     if (result && result.conflict) {
       setConflictData(result.data);
     }
@@ -155,8 +159,13 @@ function DocumentView() {
       <div className="main-layout">
         <div className="editor-wrapper">
           <EditorPanel
-            content={content}
-            onChange={updateContent}
+            pages={pages}
+            activePageId={activePageId}
+            onPageChange={setActivePageId}
+            onAddPage={(newId) => setPages(prev => ({ ...prev, [newId]: "" }))}
+            pageActivity={pageActivity}
+            content={pages[activePageId] || ""}
+            onChange={(newC, delta) => updateContent(activePageId, newC, delta)}
             lastEditedBy={lastEditedBy}
             remoteCursors={remoteCursors}
             sendCursorMove={sendCursorMove}
@@ -193,7 +202,7 @@ function DocumentView() {
         <div className="overlay">
           <DiffViewer
             oldText={selectedSnapshot.content}
-            newText={content}
+            newText={fullContentStr}
             snapshotUserName={selectedSnapshot.savedBy}
             snapshotUserColor={selectedSnapshot.savedByColor}
             currentUserName={currentUser.userName}
@@ -221,13 +230,17 @@ function DocumentView() {
         <ConflictModal
           serverVersion={conflictData.serverVersion}
           serverContent={conflictData.serverContent}
-          localContent={content}
+          localContent={fullContentStr}
           onAcceptMine={async () => {
-            const result = await saveSnapshot(content, "manual", "", conflictData.serverVersion, true);
+            const result = await saveSnapshot(fullContentStr, "manual", "", conflictData.serverVersion, true);
             if (!result?.conflict) setConflictData(null);
           }}
           onAcceptTheirs={() => {
-            setContent(conflictData.serverContent);
+            try {
+              setPages(JSON.parse(conflictData.serverContent));
+            } catch {
+              setPages({ main: conflictData.serverContent });
+            }
             lastSnapshotContentRef.current = conflictData.serverContent;
             baseVersionRef.current = conflictData.serverVersion;
             setConflictData(null);
