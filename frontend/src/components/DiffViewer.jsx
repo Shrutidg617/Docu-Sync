@@ -134,7 +134,7 @@ function DiffViewer({
   }
 
   return (
-    <div className="diff-card">
+    <div className="modal-card diff-viewer-modal">
       <div className="diff-card-header">
         <div>
           <h3>Diff Preview</h3>

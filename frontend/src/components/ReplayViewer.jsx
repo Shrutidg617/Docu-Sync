@@ -77,7 +77,7 @@ function ReplayViewer({ snapshots, onClose }) {
               setPlaying(false);
               setCurrentIndex(Number(e.target.value));
             }}
-            style={{ width: '100%', cursor: 'pointer', accentColor: '#4f46e5' }}
+            style={{ width: '100%', cursor: 'pointer', accentColor: '#0F766E' }}
           />
 
           <div className="replay-controls" style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
@@ -119,7 +119,7 @@ function ReplayViewer({ snapshots, onClose }) {
           </div>
         </div>
 
-        <div className="replay-meta" style={{ marginTop: '16px', background: '#f8fafc', padding: '12px', borderRadius: '8px' }}>
+        <div className="replay-meta" style={{ marginTop: '16px', background: '#FDFBF7', border: '1px solid #e5e7eb', padding: '12px', borderRadius: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span
               className="mini-user-pill"
@@ -143,7 +143,7 @@ function ReplayViewer({ snapshots, onClose }) {
           )}
         </div>
 
-        <div className="replay-content" style={{ marginTop: '16px', overflowY: 'auto', flex: 1, padding: '16px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
+        <div className="replay-content" style={{ marginTop: '16px', overflowY: 'auto', flex: 1, padding: '16px', background: '#ffffff', color: '#2C241B', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
           {currentSnapshot.content.startsWith('{"ops"') ? (
             <div style={{ wordBreak: 'break-word', whiteSpace: 'pre-wrap', fontStyle: 'italic', color: '#64748b' }}>
               [Rich Text Content] {JSON.parse(currentSnapshot.content).ops.map(o => o.insert).join('')}

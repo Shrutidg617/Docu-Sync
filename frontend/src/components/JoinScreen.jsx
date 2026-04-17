@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { Helmet } from 'react-helmet-async';
 import { useLocation, useNavigate } from "react-router-dom";
 
-const COLORS = ["#4F46E5", "#059669", "#DC2626", "#D97706", "#7C3AED", "#0891B2"];
+const COLORS = ["#7A0016", "#0F766E", "#042F2E", "#451A03", "#312E81", "#831843"];
 
 function JoinScreen({ onJoin }) {
   const navigate = useNavigate();
@@ -13,6 +14,8 @@ function JoinScreen({ onJoin }) {
   const [selectedColor, setSelectedColor] = useState(COLORS[0]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const isLogin = mode === "login";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -35,7 +38,8 @@ function JoinScreen({ onJoin }) {
         ? { username, email, password }
         : { email, password };
 
-      const res = await fetch(`http://localhost:5001${endpoint}`, {
+      const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+      const res = await fetch(`${baseApi}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -74,10 +78,14 @@ function JoinScreen({ onJoin }) {
   };
 
   return (
-    <div className="join-screen">
+    <main className="join-screen">
+      <Helmet>
+        <title>Docu-Sync | {isLogin ? 'Login' : 'Sign Up'}</title>
+        <meta name="description" content="Securely access your collaborative workspace and start syncing documents in real-time." />
+      </Helmet>
       <div className="join-card">
-        <h1>DocuSync</h1>
-        <p>Version-Controlled Collaborative Editor</p>
+        <h1>{isLogin ? "Welcome Back" : "Create Account"}</h1>
+        <p>{isLogin ? "Sign in to access your docs" : "Collaborate in real-time for free"}</p>
 
         {error && <div style={{ color: "#DC2626", marginBottom: "16px", fontWeight: "600", fontSize: "14px" }}>{error}</div>}
 
@@ -140,7 +148,7 @@ function JoinScreen({ onJoin }) {
           )}
         </div>
       </div>
-    </div>
+    </main>
   );
 }
 

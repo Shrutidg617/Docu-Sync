@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async';
 import { useParams, useNavigate } from 'react-router-dom';
 import Header from '../components/Header';
 import EditorPanel from '../components/EditorPanel';
@@ -11,7 +12,7 @@ import { useSocket } from '../hooks/useSocket';
 import { useDocument } from '../hooks/useDocument';
 import { useAutosave } from '../hooks/useAutosave';
 
-const SOCKET_URL = 'http://localhost:5001';
+const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 
 function DocumentView() {
   const { roomId } = useParams();
@@ -27,7 +28,8 @@ function DocumentView() {
   }, [token, navigate, roomId]);
 
   const currentUser = useMemo(() => ({ userName, color: userColor }), [userName, userColor]);
-  const API_URL = `http://localhost:5001/api/document/${roomId}`;
+  const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+  const API_URL = `${baseApi}/api/document/${roomId}`;
 
   const socket = useSocket(SOCKET_URL, !!token, roomId, userName, userColor, userId, token);
 
@@ -132,7 +134,11 @@ function DocumentView() {
   if (!token) return null;
 
   return (
-    <div className="app-shell">
+    <main className="app-shell">
+      <Helmet>
+        <title>Docu-Sync | {effectiveMeta?.title || 'Document'}</title>
+        <meta name="description" content={`Edit and collaborate on ${effectiveMeta?.title || 'this document'} in real-time with your team.`} />
+      </Helmet>
       <Header
         activeUsers={activeUsers}
         currentUser={currentUser}
@@ -166,7 +172,10 @@ function DocumentView() {
         </div>
 
         {sidebarVisible && (
-          <div className="sidebar-wrapper" style={{ width: '360px' }}>
+          <div className="sidebar-wrapper" style={{ width: `${sidebarWidth}px` }}>
+            {/* Resizer Handle */}
+            <div className="resizer-handle" onMouseDown={startResizing} />
+            
             <Sidebar
               snapshots={snapshots}
               activityLogs={activityLogs}
@@ -181,15 +190,17 @@ function DocumentView() {
       </div>
 
       {selectedSnapshot && (
-        <DiffViewer
-          oldText={selectedSnapshot.content}
-          newText={content}
-          snapshotUserName={selectedSnapshot.savedBy}
-          snapshotUserColor={selectedSnapshot.savedByColor}
-          currentUserName={currentUser.userName}
-          currentUserColor={currentUser.color}
-          onClose={() => setSelectedSnapshot(null)}
-        />
+        <div className="overlay">
+          <DiffViewer
+            oldText={selectedSnapshot.content}
+            newText={content}
+            snapshotUserName={selectedSnapshot.savedBy}
+            snapshotUserColor={selectedSnapshot.savedByColor}
+            currentUserName={currentUser.userName}
+            currentUserColor={currentUser.color}
+            onClose={() => setSelectedSnapshot(null)}
+          />
+        </div>
       )}
 
       {replayOpen && (
@@ -224,7 +235,7 @@ function DocumentView() {
           onCancel={() => setConflictData(null)}
         />
       )}
-    </div>
+    </main>
   );
 }
 

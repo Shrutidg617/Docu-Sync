@@ -35,38 +35,52 @@ function Header({
   };
 
   const toggleVisibility = async () => {
-    if (!isOwner) return;
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+    if (!documentMeta) return;
+    setTogglingVisibility(true);
     try {
-      const res = await fetch(`http://localhost:5001/api/docs/${roomId}/visibility`, {
+      const res = await fetch(`${baseApi}/api/docs/${roomId}/visibility`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ isPublic: !isPublic }),
+        body: JSON.stringify({ isPublic: !documentMeta.isPublic }),
       });
       if (res.ok) {
-        if (onVisibilityChange) onVisibilityChange(!isPublic);
-      } else { const e = await res.json(); alert(e.error || 'Toggle failed'); }
-    } catch { alert('Failed to toggle visibility'); }
+        const isNowPublic = !documentMeta.isPublic;
+        if (onVisibilityChange) onVisibilityChange(isNowPublic);
+      } else {
+        const e = await res.json();
+        alert(e.error || 'Failed to toggle visibility');
+      }
+    } catch {
+      alert('Failed to toggle visibility');
+    } finally {
+      setTogglingVisibility(false);
+    }
   };
 
-  const handleAddCollaborator = async () => {
-    if (!isOwner) return;
-    const email = window.prompt("Enter the exact email address of the collaborator:");
-    if (!email || !email.trim()) return;
-
+  const handleAddCollaborator = async (e) => {
+    e.preventDefault();
+    if (!collabEmail.trim()) return;
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+    setAddingCollab(true);
+    setCollabStatus('');
     try {
-      const res = await fetch(`http://localhost:5001/api/docs/add-collaborator`, {
+      const res = await fetch(`${baseApi}/api/docs/add-collaborator`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ roomId, email: email.trim() }),
+        body: JSON.stringify({ roomId, email: collabEmail.trim() }),
       });
       const data = await res.json();
       if (res.ok) {
-        alert("Collaborator dynamically added!");
+        setCollabStatus('✅ Collaborator added!');
+        setCollabEmail('');
       } else {
-        alert(data.error || 'Failed to add collaborator. Are you sure they have an account?');
+        setCollabStatus(`❌ ${data.error || 'Failed'}`);
       }
     } catch {
-      alert('Network error while adding collaborator');
+      setCollabStatus('❌ Error');
+    } finally {
+      setAddingCollab(false);
     }
   };
 
@@ -80,9 +94,10 @@ function Header({
   const commitTitleEdit = useCallback(async () => {
     const trimmed = titleDraft.trim();
     if (!trimmed || trimmed === title) { setEditingTitle(false); return; }
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     setSavingTitle(true);
     try {
-      const res = await fetch(`http://localhost:5001/api/docs/${roomId}/rename`, {
+      const res = await fetch(`${baseApi}/api/docs/${roomId}/rename`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ title: trimmed }),

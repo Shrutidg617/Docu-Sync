@@ -1,8 +1,10 @@
 import React, { useState } from "react";
+import { Helmet } from 'react-helmet-async';
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import JoinScreen from "./components/JoinScreen";
 import Dashboard from "./views/Dashboard";
 import DocumentView from "./views/DocumentView";
+import { HelmetProvider } from 'react-helmet-async';
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem("docu-sync-token") || "");
@@ -16,26 +18,28 @@ function App() {
   };
 
   return (
-    <Router>
-      <Routes>
-        <Route 
-          path="/" 
-          element={token ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />} 
-        />
-        <Route
-          path="/login"
-          element={token ? <Navigate to="/dashboard" replace /> : <JoinScreen onJoin={handleAuth} />}
-        />
-        <Route
-          path="/dashboard"
-          element={token ? <Dashboard setToken={setToken} /> : <Navigate to="/login" replace />}
-        />
-        <Route 
-          path="/doc/:roomId" 
-          element={<DocumentView />} 
-        />
-      </Routes>
-    </Router>
+    <HelmetProvider>
+      <Router>
+        <Routes>
+          <Route 
+            path="/" 
+            element={token ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />} 
+          />
+          <Route
+            path="/login"
+            element={token ? <Navigate to="/dashboard" replace /> : <JoinScreen onJoin={handleAuth} />}
+          />
+          <Route
+            path="/dashboard"
+            element={token ? <Dashboard setToken={setToken} /> : <Navigate to="/login" replace />}
+          />
+          <Route 
+            path="/doc/:roomId" 
+            element={<DocumentView />} 
+          />
+        </Routes>
+      </Router>
+    </HelmetProvider>
   );
 }
 

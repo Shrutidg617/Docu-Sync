@@ -16,14 +16,17 @@
   font-family: Inter, Arial, sans-serif;
   font-size: 16px;
   line-height: 1.7;
-  border-radius: 0 0 16px 16px;
-  border-color: #dbe2ea;
+  border-radius: 0 0 8px 8px;
+  border: 1px solid #dbe2ea;
+  border-top: none;
+  background: #FDFBF7;
+  color: #2C241B;
 }
 
 .quill-wrapper .ql-toolbar.ql-snow {
-  border-radius: 16px 16px 0 0;
-  border-color: #dbe2ea;
-  background: #f8fafc;
+  border-radius: 8px 8px 0 0;
+  border: 1px solid #dbe2ea;
+  background: #FDFBF7;
 }
 
 .quill-wrapper .ql-editor {
@@ -46,8 +49,8 @@
   right: 0;
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(44, 36, 27, 0.12);
   z-index: 200;
   overflow: hidden;
   min-width: 160px;
@@ -88,8 +91,12 @@
 body {
   margin: 0;
   font-family: Inter, Arial, sans-serif;
-  background: #f3f6fb;
-  color: #18202a;
+  background: #EBE7E0;
+  color: #2C241B;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Merriweather', serif;
 }
 
 button,
@@ -103,16 +110,17 @@ textarea {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: linear-gradient(135deg, #eef2ff, #f8fafc);
+  background: #EBE7E0;
 }
 
 .join-card {
   width: 100%;
   max-width: 440px;
   background: #ffffff;
-  border-radius: 20px;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
   padding: 32px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 12px 36px rgba(44, 36, 27, 0.08);
 }
 
 .join-card h1 {
@@ -168,13 +176,14 @@ textarea {
 
 .primary-btn {
   border: none;
-  background: #4f46e5;
+  background: #0F766E;
   color: #fff;
   min-height: 42px;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 0 18px;
   cursor: pointer;
   font-weight: 700;
+  font-family: Inter, sans-serif;
 }
 
 .primary-btn:disabled {
@@ -184,13 +193,14 @@ textarea {
 
 .secondary-btn {
   border: none;
-  background: #e8ecf8;
-  color: #111827;
+  background: #D6D1C9;
+  color: #2C241B;
   min-height: 38px;
-  border-radius: 10px;
+  border-radius: 8px;
   padding: 0 14px;
   cursor: pointer;
   font-weight: 600;
+  font-family: Inter, sans-serif;
 }
 
 .secondary-btn:disabled {
@@ -322,9 +332,9 @@ textarea {
   display: flex !important;
   flex-direction: row;
   height: calc(100vh - 64px);
-  gap: 0;
-  padding: 0;
-  background: #fff;
+  gap: 20px;
+  padding: 20px;
+  background: #EBE7E0;
 }
 
 .editor-wrapper {
@@ -339,8 +349,9 @@ textarea {
 .diff-card,
 .modal-card {
   background: #ffffff;
-  border-radius: 20px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 12px 36px rgba(44, 36, 27, 0.08);
 }
 
 .editor-card {
@@ -378,18 +389,26 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #ecfdf3;
-  color: #166534;
+  background: #E0E0DB;
+  color: #2C241B;
   border-radius: 999px;
+  border: 1px solid #d6d1c9;
   padding: 8px 12px;
   font-weight: 700;
+  font-family: Inter, sans-serif;
 }
 
 .live-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #22c55e;
+  background: #0F766E;
+  animation: live-flash 1.5s infinite;
+}
+
+@keyframes live-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
 }
 
 .edited-banner {
@@ -410,17 +429,19 @@ textarea {
   width: 100%;
   flex: 1;
   border: 1px solid #dbe2ea;
-  border-radius: 16px;
+  border-radius: 8px;
   padding: 18px;
   font-size: 16px;
   line-height: 1.7;
   resize: none;
   outline: none;
-  background: #fcfdff;
+  background: #FDFBF7;
+  color: #2C241B;
 }
 
 .editor-textarea:focus {
-  border-color: #4f46e5;
+  border-color: #0F766E;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
 }
 
 .remote-cursor {
@@ -438,13 +459,18 @@ textarea {
   top: -20px;
   left: -2px;
   color: #fff;
+  font-family: Inter, sans-serif;
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
   border-bottom-left-radius: 0;
+  border: none;
   white-space: nowrap;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  z-index: 100;
 }
 
 .sidebar-wrapper {

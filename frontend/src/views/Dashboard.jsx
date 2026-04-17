@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Helmet } from 'react-helmet-async';
 import { useNavigate } from 'react-router-dom';
 
 const DOC_TYPE_META = {
@@ -33,8 +34,9 @@ function Dashboard({ setToken }) {
   }, [token, navigate]);
 
   const fetchDocs = async () => {
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     try {
-      const res = await fetch('http://localhost:5001/api/docs', {
+      const res = await fetch(`${baseApi}/api/docs`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error('Failed to fetch documents');
@@ -47,9 +49,10 @@ function Dashboard({ setToken }) {
   };
 
   const handleCreateNew = async () => {
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     setCreatingDoc(true);
     try {
-      const res = await fetch('http://localhost:5001/api/docs/create', {
+      const res = await fetch(`${baseApi}/api/docs/create`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: newDocType }),
@@ -66,9 +69,10 @@ function Dashboard({ setToken }) {
   };
 
   const handleDelete = async (roomId) => {
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     if (!window.confirm('Permanently delete this document?')) return;
     try {
-      const res = await fetch(`http://localhost:5001/api/docs/${roomId}`, {
+      const res = await fetch(`${baseApi}/api/docs/${roomId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -83,10 +87,11 @@ function Dashboard({ setToken }) {
   };
 
   const commitRename = async (roomId) => {
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     const trimmed = renameVal.trim();
     if (!trimmed) { setRenamingId(null); return; }
     try {
-      const res = await fetch(`http://localhost:5001/api/docs/${roomId}/rename`, {
+      const res = await fetch(`${baseApi}/api/docs/${roomId}/rename`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: trimmed }),
@@ -106,10 +111,11 @@ function Dashboard({ setToken }) {
   };
 
   const toggleVisibility = async () => {
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     if (!shareModalDoc) return;
     setTogglingVisibility(true);
     try {
-      const res = await fetch(`http://localhost:5001/api/docs/${shareModalDoc.roomId}/visibility`, {
+      const res = await fetch(`${baseApi}/api/docs/${shareModalDoc.roomId}/visibility`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ isPublic: !shareModalDoc.isPublic }),
@@ -130,12 +136,13 @@ function Dashboard({ setToken }) {
   };
 
   const handleAddCollaborator = async (e) => {
+    const baseApi = import.meta.env.VITE_API_URL || 'http://localhost:5001';
     e.preventDefault();
     if (!collabEmail.trim() || !shareModalDoc) return;
     setAddingCollab(true);
     setCollabStatus('');
     try {
-      const res = await fetch('http://localhost:5001/api/docs/add-collaborator', {
+      const res = await fetch(`${baseApi}/api/docs/add-collaborator`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ roomId: shareModalDoc.roomId, email: collabEmail.trim() }),
@@ -170,7 +177,11 @@ function Dashboard({ setToken }) {
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>Loading dashboard…</div>;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '40px 20px' }}>
+    <main style={{ maxWidth: 1100, margin: '0 auto', padding: '40px 20px' }}>
+      <Helmet>
+        <title>Docu-Sync | Dashboard</title>
+        <meta name="description" content="Manage your documents, collaborate with your team, and track your project progress from your personalized dashboard." />
+      </Helmet>
       {/* Header row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
         <div>
@@ -201,8 +212,8 @@ function Dashboard({ setToken }) {
           return (
             <div key={doc.roomId} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '18px 20px', background: '#fff', borderRadius: 14,
-              border: '1px solid #e5e7eb', boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+              padding: '18px 20px', background: '#FDFBF7', borderRadius: 12,
+              border: '1px solid #e5e7eb', boxShadow: '0 4px 12px rgba(44, 36, 27, 0.05)',
               transition: 'box-shadow 0.15s ease',
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -219,7 +230,7 @@ function Dashboard({ setToken }) {
                         if (e.key === 'Escape') setRenamingId(null);
                       }}
                       style={{
-                        fontWeight: 700, fontSize: 16, border: '2px solid #4f46e5',
+                        fontWeight: 700, fontSize: 16, border: '2px solid #0F766E',
                         borderRadius: 8, padding: '3px 10px', outline: 'none',
                       }}
                     />
@@ -274,8 +285,8 @@ function Dashboard({ setToken }) {
           display: 'grid', placeItems: 'center', zIndex: 1000,
         }}>
           <div style={{
-            background: '#fff', borderRadius: 20, padding: 32,
-            width: 'min(480px, 90vw)', boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+            background: '#FDFBF7', borderRadius: 12, padding: 32,
+            width: 'min(480px, 90vw)', boxShadow: '0 20px 60px rgba(44, 36, 27, 0.15)',
           }}>
             <h2 style={{ margin: '0 0 8px' }}>Create New Document</h2>
             <p style={{ color: '#64748b', marginBottom: 24 }}>Choose a document type to get started.</p>
@@ -284,8 +295,8 @@ function Dashboard({ setToken }) {
               {Object.entries(DOC_TYPE_META).map(([type, meta]) => (
                 <label key={type} style={{
                   display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-                  borderRadius: 12, border: `2px solid ${newDocType === type ? '#4f46e5' : '#e5e7eb'}`,
-                  background: newDocType === type ? '#eef2ff' : '#fff',
+                  borderRadius: 12, border: `2px solid ${newDocType === type ? '#0F766E' : '#e5e7eb'}`,
+                  background: newDocType === type ? '#EBE7E0' : '#FDFBF7',
                   cursor: 'pointer', transition: 'all 0.15s ease',
                 }}>
                   <input type="radio" name="doctype" value={type}
@@ -323,8 +334,8 @@ function Dashboard({ setToken }) {
           display: 'grid', placeItems: 'center', zIndex: 1000,
         }} onClick={(e) => { if (e.target === e.currentTarget) setShareModalDoc(null); }}>
           <div style={{
-            background: '#fff', borderRadius: 20, padding: 32,
-            width: 'min(520px, 92vw)', boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+            background: '#FDFBF7', borderRadius: 12, padding: 32,
+            width: 'min(520px, 92vw)', boxShadow: '0 20px 60px rgba(44, 36, 27, 0.15)',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <h2 style={{ margin: 0 }}>Share Document</h2>
@@ -369,8 +380,8 @@ function Dashboard({ setToken }) {
             {/* Copy shareable link */}
             <div style={{
               display: 'flex', gap: 10, marginBottom: 20,
-              padding: '12px 14px', background: '#f8fafc', borderRadius: 12,
-              border: '1px solid #e5e7eb', alignItems: 'center',
+              padding: '12px 14px', background: '#EBE7E0', borderRadius: 8,
+              border: '1px solid #c9c3b8', alignItems: 'center',
             }}>
               <input
                 readOnly
@@ -406,7 +417,7 @@ function Dashboard({ setToken }) {
                 value={collabEmail}
                 onChange={(e) => setCollabEmail(e.target.value)}
                 style={{
-                  flex: 1, height: 42, border: '1px solid #d0d7e2', borderRadius: 12,
+                  flex: 1, height: 42, border: '1px solid #c9c3b8', borderRadius: 8,
                   padding: '0 14px', outline: 'none', fontSize: 14,
                 }}
               />
@@ -432,7 +443,7 @@ function Dashboard({ setToken }) {
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 }
 

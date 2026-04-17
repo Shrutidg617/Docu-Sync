@@ -9,6 +9,6 @@ export default defineConfig({
     babel({ presets: [reactCompilerPreset()] })
   ],
   optimizeDeps: {
-    include: ['quill', 'quill-cursors'],
+    include: ['quill', 'quill-cursors', 'diff-match-patch'],
   },
 })

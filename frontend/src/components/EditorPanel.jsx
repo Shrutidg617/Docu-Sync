@@ -107,14 +107,23 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
   // Sync with 'content' prop (fallback for external state changes like Restore)
   useEffect(() => {
     const q = quillRef.current;
-    if (!q || content === lastRemoteContent.current) return;
+    if (!q || !content) return;
+    
+    // Normalize content for comparison to prevent infinite JSON stringification loops
+    if (content === lastRemoteContent.current) return;
 
     isRemoteRef.current = true;
     try {
       const delta = JSON.parse(content);
-      q.setContents(delta, 'silent');
+      // Double check if it actually changed by comparing deltas
+      const current = q.getContents();
+      if (JSON.stringify(current) !== content) {
+          q.setContents(delta, 'silent');
+      }
     } catch {
-      q.setText(content || '', 'silent');
+      if (q.getText().trim() !== content.trim()) {
+          q.setText(content || '', 'silent');
+      }
     }
     lastRemoteContent.current = content;
     isRemoteRef.current = false;
@@ -168,12 +177,60 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
   useEffect(() => {
     const cursors = cursorsModuleRef.current;
     if (!cursors || !remoteCursors) return;
+
+    // Grouping for staggering (visual collision fix)
+    const positionMap = new Map();
+
     Object.entries(remoteCursors).forEach(([uid, data]) => {
       try {
+        const index = data.index || 0;
+        if (!positionMap.has(index)) positionMap.set(index, []);
+        positionMap.get(index).push(uid);
+
         cursors.createCursor(uid, data.userName, data.userColor);
-        cursors.moveCursor(uid, { index: data.index || 0, length: 0 });
+        cursors.moveCursor(uid, { index, length: 0 });
       } catch {}
     });
+
+    // Apply staggering to the labels via DOM
+    // We use a safe delay to ensure library has rendered/moved the elements
+    const timeoutId = setTimeout(() => {
+      if (!containerRef.current) return;
+      const allCursorEls = containerRef.current.querySelectorAll('.ql-cursor');
+      allCursorEls.forEach(cursorEl => {
+        const labelEl = cursorEl.querySelector('.ql-cursor-label');
+        if (!labelEl) return;
+
+        // Reset first to get an accurate baseline measurement
+        labelEl.style.transform = '';
+
+        const rect = cursorEl.getBoundingClientRect();
+        const others = Array.from(allCursorEls).filter(other => {
+          const oRect = other.getBoundingClientRect();
+          return other !== cursorEl && 
+                 Math.abs(oRect.left - rect.left) < 3 &&
+                 Math.abs(oRect.top - rect.top) < 3;
+        });
+
+        if (others.length > 0) {
+          // Collision detected! Sort them by text name or data-id for consistency
+          const collisionGroup = [cursorEl, ...others].sort((a,b) => {
+            const nameA = a.querySelector('.ql-cursor-label')?.innerText || '';
+            const nameB = b.querySelector('.ql-cursor-label')?.innerText || '';
+            return nameA.localeCompare(nameB);
+          });
+          
+          const myOrder = collisionGroup.indexOf(cursorEl);
+          if (myOrder > 0) {
+            // Stagger labels horizontally by 14px and vertically by 4px
+            labelEl.style.transform = `translate(${myOrder * 14}px, ${myOrder * -4}px)`;
+            labelEl.style.zIndex = 200 + myOrder;
+          }
+        }
+      });
+    }, 50);
+
+    return () => clearTimeout(timeoutId);
   }, [remoteCursors]);
 
   useImperativeHandle(ref, () => ({
@@ -205,13 +262,38 @@ function PlainEditor({ content, onChange, remoteCursors, sendCursorMove, placeho
 
   const renderCursors = () => {
     if (!textareaRef.current || !remoteCursors) return null;
-    return Object.entries(remoteCursors).map(([uid, cur]) => {
+
+    // Grouping for staggering
+    const positionMap = new Map();
+    const sortedEntries = Object.entries(remoteCursors);
+
+    return sortedEntries.map(([uid, cur]) => {
       try {
-        const coords = getCaretCoordinates(textareaRef.current, cur.index);
+        const index = cur.index || 0;
+        if (!positionMap.has(index)) positionMap.set(index, 0);
+        const collisionCount = positionMap.get(index);
+        positionMap.set(index, collisionCount + 1);
+
+        const coords = getCaretCoordinates(textareaRef.current, index);
+        const staggerX = collisionCount * 14; 
+        const staggerY = collisionCount * -2;
+
         return (
           <div key={uid} className="remote-cursor"
-            style={{ transform: `translate(${coords.left}px,${coords.top}px)`, height: `${coords.height || 20}px`, borderLeft: `2px solid ${cur.userColor}` }}>
-            <div className="remote-cursor-label" style={{ backgroundColor: cur.userColor }}>{cur.userName}</div>
+            style={{ 
+              transform: `translate(${coords.left}px,${coords.top}px)`, 
+              height: `${coords.height || 20}px`, 
+              borderLeft: `2px solid ${cur.userColor}`,
+              zIndex: 50 + collisionCount
+            }}>
+            <div className="remote-cursor-label" 
+              style={{ 
+                backgroundColor: cur.userColor,
+                transform: `translate(${staggerX}px, ${staggerY}px)`,
+                transition: 'transform 0.2s ease-out'
+              }}>
+              {cur.userName}
+            </div>
           </div>
         );
       } catch { return null; }
