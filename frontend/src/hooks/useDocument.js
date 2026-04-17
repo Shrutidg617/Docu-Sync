@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-export const useDocument = (socket, roomId, userName, userColor, token) => {
+export const useDocument = (socket, roomId, userName, userColor) => {
   const [documentMeta, setDocumentMeta] = useState({ title: 'Untitled Document', isPublic: false, ownerId: null, type: 'text' });
   const [pages, setPages] = useState({ main: "" });
   const [activePageId, setActivePageId] = useState("main");
@@ -15,11 +15,8 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
 
   const editTimeoutRef = useRef(null);
   const logTimeoutRef = useRef(null);
-  const debounceRef = useRef(null);       // 300ms debounce for socket emit
   const lastSnapshotContentRef = useRef('');
   const cursorThrottleRef = useRef(null);
-  const isRemoteChange = useRef(false);   // prevent echo loops
-
   useEffect(() => {
     if (!socket) return;
 
@@ -77,6 +74,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       }
     };
 
+
     const handleUsersUpdated = (users) => {
       setActiveUsers(users || []);
     };
@@ -128,13 +126,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       }));
     };
 
-    const handleServerResync = (data) => {
-      setContent(data.content);
-      baseVersionRef.current = data.version;
-    };
-
     socket.on("initial-document", handleInitialDocument);
-    socket.on("receive-changes", handleReceiveChanges);
     socket.on("users-updated", handleUsersUpdated);
     socket.on("snapshots-updated", handleSnapshotsUpdated);
     socket.on("activity-updated", handleActivityUpdated);
@@ -143,11 +135,9 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
     socket.on("cursor-update", handleCursorUpdate);
     socket.on("user-left", handleUserLeft);
     socket.on("document-version-updated", handleVersionUpdated);
-    socket.on("server-resync", handleServerResync);
 
     return () => {
       socket.off("initial-document", handleInitialDocument);
-      socket.off("receive-changes", handleReceiveChanges);
       socket.off("users-updated", handleUsersUpdated);
       socket.off("snapshots-updated", handleSnapshotsUpdated);
       socket.off("activity-updated", handleActivityUpdated);
@@ -156,11 +146,9 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       socket.off("cursor-update", handleCursorUpdate);
       socket.off("user-left", handleUserLeft);
       socket.off("document-version-updated", handleVersionUpdated);
-      socket.off("server-resync", handleServerResync);
       
       if (editTimeoutRef.current) clearTimeout(editTimeoutRef.current);
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
       if (cursorThrottleRef.current) clearTimeout(cursorThrottleRef.current);
     };
   }, [socket]);

@@ -175,6 +175,7 @@ function DocumentView() {
             roomId={roomId}
             userName={userName}
             userColor={userColor}
+            token={token}
             sidebarVisible={sidebarVisible}
             onToggleSidebar={() => setSidebarVisible(!sidebarVisible)}
           />
