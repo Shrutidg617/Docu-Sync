@@ -99,7 +99,6 @@ export const useAutosave = (apiUrl, content, roomId, userName, userColor, lastSn
     }
 
     return () => {
-    return () => {
         if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     }
   }, [content, apiUrl, roomId, userName, userColor, isLocalDirtyRef, isCoordinator]);
