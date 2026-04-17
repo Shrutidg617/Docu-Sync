@@ -49,15 +49,17 @@ function scheduleRoomCleanup(roomId, state) {
     clearTimeout(state.cleanupTimer);
   }
 
-  state.cleanupTimer = setTimeout(() => {
+  const cleanupTimer = setTimeout(() => {
     const currentState = roomState.get(roomId);
     if (!currentState) return;
 
     // Re-check emptiness at execution time to avoid deleting active rooms.
-    if (currentState.users.size === 0 && currentState.cleanupTimer === state.cleanupTimer) {
+    if (currentState.users.size === 0 && currentState.cleanupTimer === cleanupTimer) {
       roomState.delete(roomId);
     }
   }, 10 * 60 * 1000);
+
+  state.cleanupTimer = cleanupTimer;
 }
 
 // Master Flush Interval (5s)
@@ -454,8 +456,6 @@ io.on("connection", (socket) => {
       }
 
       // Check access strictly. Use Cache if available
-      let hasAccess = false;
-      
       if (!roomState.has(roomId)) {
         const d = await getDocWithAccess(roomId, verifiedUserId);
         const coldContent = await loadContent(d);
@@ -468,7 +468,6 @@ io.on("connection", (socket) => {
           lastActive: Date.now(),
           cleanupTimer: null
         });
-        hasAccess = true;
       } else {
         const state = roomState.get(roomId);
         if (state.cleanupTimer) {
@@ -476,11 +475,9 @@ io.on("connection", (socket) => {
           state.cleanupTimer = null;
         }
         if (state.accessCache.has(verifiedUserId)) {
-          hasAccess = true;
         } else {
           await getDocWithAccess(roomId, verifiedUserId);
           state.accessCache.add(verifiedUserId);
-          hasAccess = true;
         }
       }
 

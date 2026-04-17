@@ -56,7 +56,7 @@ function DocumentView() {
     baseVersionRef,
     isLocalDirtyRef,
     setContent
-  } = useDocument(socket, roomId, userName, userColor, token);
+  } = useDocument(socket, roomId, userName, userColor);
 
   const [conflictData, setConflictData] = useState(null);
 
@@ -166,6 +166,7 @@ function DocumentView() {
             roomId={roomId}
             userName={userName}
             userColor={userColor}
+            token={token}
             sidebarVisible={sidebarVisible}
             onToggleSidebar={() => setSidebarVisible(!sidebarVisible)}
           />
