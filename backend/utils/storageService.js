@@ -145,6 +145,24 @@ async function deleteAllBlobs(roomId) {
   }
 }
 
+async function deleteBlobByUrl(blobUrl) {
+  if (!containerClient || !blobUrl) return;
+
+  const marker = `${CONTAINER_NAME}/`;
+  const idx = blobUrl.indexOf(marker);
+  if (idx === -1) {
+    throw new Error(`Malformed blob URL: ${blobUrl}`);
+  }
+
+  const blobName = blobUrl.slice(idx + marker.length);
+  if (!blobName) {
+    throw new Error(`Missing blob name in URL: ${blobUrl}`);
+  }
+
+  const blobClient = containerClient.getBlobClient(blobName);
+  await blobClient.deleteIfExists();
+}
+
 async function streamToBuffer(readableStream) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -163,5 +181,6 @@ module.exports = {
   saveContent,
   loadContent,
   deleteAllBlobs,
+  deleteBlobByUrl,
   blobCache
 };

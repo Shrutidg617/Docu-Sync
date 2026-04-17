@@ -6,7 +6,7 @@ const Snapshot = require('../models/Snapshot');
 const ActivityLog = require('../models/ActivityLog');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
-const { saveContent, deleteAllBlobs } = require('../utils/storageService');
+const { saveContent, deleteBlobByUrl } = require('../utils/storageService');
 
 // Protect all routes
 router.use(authMiddleware);
@@ -161,19 +161,34 @@ router.put('/:roomId/visibility', async (req, res) => {
 // DELETE /api/docs/:roomId - Delete document completely
 router.delete('/:roomId', async (req, res) => {
   try {
-    const doc = await Document.findOne({ roomId: req.params.roomId });
+    const roomId = req.params.roomId;
+    const doc = await Document.findOne({ roomId });
     if (!doc) return res.status(404).json({ error: 'Document not found' });
 
     if (doc.ownerId.toString() !== req.user.userId) {
       return res.status(403).json({ error: 'Only the owner can delete the document' });
     }
 
-    // Cascade delete everywhere it exists
+    const snapshots = await Snapshot.find({ roomId }).select('blobUrl');
+    const blobUrls = [doc.blobUrl, ...snapshots.map((s) => s.blobUrl)].filter(Boolean);
+
+    // Attempt blob cleanup first, but continue even when individual blob deletions fail.
+    const blobDeletionResults = await Promise.allSettled(
+      blobUrls.map((blobUrl) => deleteBlobByUrl(blobUrl))
+    );
+    const blobDeleteFailures = blobDeletionResults.filter((result) => result.status === 'rejected');
+    if (blobDeleteFailures.length > 0) {
+      console.warn(`Blob cleanup had ${blobDeleteFailures.length} failures for room ${roomId}`);
+      blobDeleteFailures.forEach((failure) => {
+        console.warn('Blob deletion failure:', failure.reason?.message || failure.reason);
+      });
+    }
+
+    // Cascade Mongo cleanup after blob delete attempts.
     await Promise.all([
       Document.deleteOne({ _id: doc._id }),
-      Snapshot.deleteMany({ roomId: req.params.roomId }),
-      ActivityLog.deleteMany({ roomId: req.params.roomId }),
-      deleteAllBlobs(req.params.roomId) // Clean up Azure storage
+      Snapshot.deleteMany({ roomId }),
+      ActivityLog.deleteMany({ roomId })
     ]);
 
     res.json({ success: true, message: 'Document deleted successfully' });

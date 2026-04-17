@@ -6,7 +6,6 @@ const dotenv = require("dotenv");
 const { Server } = require("socket.io");
 const WebSocket = require("ws");
 const { setupWSConnection } = require("y-websocket/bin/utils");
-const { Delta } = require("quill-delta");
 const Document = require("./models/Document");
 const Snapshot = require("./models/Snapshot");
 const ActivityLog = require("./models/ActivityLog");
@@ -42,17 +41,23 @@ const io = new Server(server, {
 
 const activeUsersByRoom = {};
 const roomState = new Map();
-// Structure: { content: Delta/String, version: Number, dirty: Boolean, users: Set, accessCache: Set, lastActive: Date }
+// Structure: { content: Delta/String, version: Number, dirty: Boolean, users: Set, accessCache: Set, lastActive: Date, cleanupTimer: Timeout|null }
 
-function applyDelta(currentContentStr, incomingDelta) {
-  try {
-    const base = new Delta(JSON.parse(currentContentStr || '{"ops":[{"insert":"\\n"}]}'));
-    const applied = base.compose(new Delta(incomingDelta));
-    return JSON.stringify(applied);
-  } catch (e) {
-    // Fallback if current content isn't a valid Delta (e.g. plain text / code editor format)
-    return incomingDelta;
+function scheduleRoomCleanup(roomId, state) {
+  if (!state) return;
+  if (state.cleanupTimer) {
+    clearTimeout(state.cleanupTimer);
   }
+
+  state.cleanupTimer = setTimeout(() => {
+    const currentState = roomState.get(roomId);
+    if (!currentState) return;
+
+    // Re-check emptiness at execution time to avoid deleting active rooms.
+    if (currentState.users.size === 0 && currentState.cleanupTimer === state.cleanupTimer) {
+      roomState.delete(roomId);
+    }
+  }, 10 * 60 * 1000);
 }
 
 // Master Flush Interval (5s)
@@ -460,11 +465,16 @@ io.on("connection", (socket) => {
           version: d.version,
           users: new Set(),
           accessCache: new Set([verifiedUserId]),
-          lastActive: Date.now()
+          lastActive: Date.now(),
+          cleanupTimer: null
         });
         hasAccess = true;
       } else {
         const state = roomState.get(roomId);
+        if (state.cleanupTimer) {
+          clearTimeout(state.cleanupTimer);
+          state.cleanupTimer = null;
+        }
         if (state.accessCache.has(verifiedUserId)) {
           hasAccess = true;
         } else {
@@ -532,35 +542,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-changes", ({ roomId, content, userName, token, baseVersion = 0 }) => {
-    try {
-      const state = roomState.get(roomId);
-      if (!state) return;
-      
-      // Simple loop/auth guard via state users cache
-      if (!state.users.has(socket.id)) return;
-
-      if (baseVersion < state.version) {
-        console.warn(`[Guardrail] Dropping stale payload from ${userName}. Client: ${baseVersion}, Server: ${state.version}`);
-        socket.emit("server-resync", { content: state.content, version: state.version });
-        return;
-      }
-
-      // Apply Delta dynamically (fallback if string overrides)
-      state.content = applyDelta(state.content, content);
-      state.dirty = true;
-      state.lastActive = Date.now();
-
-      socket.to(roomId).emit("receive-changes", {
-        content,
-        userName,
-      });
-
-    } catch (error) {
-      console.error("Send changes error:", error);
-    }
-  });
-
   socket.on("log-edit", async ({ roomId, userName, userColor }) => {
     try {
       await addActivity(roomId, {
@@ -587,6 +568,15 @@ io.on("connection", (socket) => {
   socket.on("disconnect", async () => {
     try {
       const { roomId, userName, color } = socket.data || {};
+
+      const state = roomState.get(roomId);
+      if (state) {
+        state.users.delete(socket.id);
+        state.lastActive = Date.now();
+        if (state.users.size === 0) {
+          scheduleRoomCleanup(roomId, state);
+        }
+      }
 
       if (roomId && activeUsersByRoom[roomId]) {
         activeUsersByRoom[roomId] = activeUsersByRoom[roomId].filter(
@@ -626,9 +616,26 @@ const wss = new WebSocket.Server({ noServer: true });
 server.on('upgrade', (request, socket, head) => {
   // Try to only handle paths starting with /yjs/
   if (request.url.startsWith('/yjs/')) {
+    const parsedUrl = new URL(request.url, 'http://localhost');
+    const token = parsedUrl.searchParams.get('token');
+
+    if (!token) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    try {
+      jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_mode');
+    } catch (error) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
     // We rewrite the URL so y-websocket picks up the room name correctly
     // /yjs/room123 -> /room123
-    request.url = request.url.replace('/yjs', '');
+    request.url = parsedUrl.pathname.replace('/yjs', '') + parsedUrl.search;
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });

@@ -47,7 +47,7 @@ function escapeHtml(s) {
 }
 
 // ─── Rich-text Quill editor (direct DOM init, React 19 safe) ─────────────────
-const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomId, userName, userColor }, ref) => {
+const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomId, userName, userColor, token }, ref) => {
   const containerRef = useRef(null);
   const quillRef = useRef(null);
   const lastRemoteContent = useRef(content);
@@ -88,7 +88,9 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
     const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
     
     // Y-Websocket provider magically routes by "room name" parameter automatically
-    const provider = new WebsocketProvider(wsUrl, roomId, ydoc);
+    const provider = new WebsocketProvider(wsUrl, roomId, ydoc, {
+      params: { token }
+    });
     
     // Optional awareness payload passing
     provider.awareness.setLocalStateField('user', {
@@ -213,7 +215,7 @@ function EditorPanel({
   content, onChange, lastEditedBy,
   remoteCursors, sendCursorMove,
   docType = 'text', docTitle = 'Document',
-  socket, roomId, userName, userColor,
+  socket, roomId, userName, userColor, token,
   sidebarVisible, onToggleSidebar
 }) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -331,6 +333,7 @@ function EditorPanel({
           roomId={roomId}
           userName={userName}
           userColor={userColor}
+            token={token}
         />
       ) : (
         <PlainEditor

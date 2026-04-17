@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-export const useDocument = (socket, roomId, userName, userColor, token) => {
+export const useDocument = (socket, roomId, userName, userColor) => {
   const [documentMeta, setDocumentMeta] = useState({ title: 'Untitled Document', isPublic: false, ownerId: null, type: 'text' });
   const [content, setContent] = useState("");
   const [activeUsers, setActiveUsers] = useState([]);
@@ -13,11 +13,8 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
 
   const editTimeoutRef = useRef(null);
   const logTimeoutRef = useRef(null);
-  const debounceRef = useRef(null);       // 300ms debounce for socket emit
   const lastSnapshotContentRef = useRef('');
   const cursorThrottleRef = useRef(null);
-  const isRemoteChange = useRef(false);   // prevent echo loops
-
   useEffect(() => {
     if (!socket) return;
 
@@ -47,18 +44,6 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
 
     const handleVersionUpdated = (newVersion) => {
       baseVersionRef.current = newVersion;
-    };
-
-    const handleReceiveChanges = (data) => {
-      // Clear lastEditedBy to enable Autosave Thundering Herd fix
-      setLastEditedBy('');
-
-      // Do NOT blind-overwrite content if it's an OT Delta diff. 
-      // RichEditor internal sync (`applyRemoteContent` listener) handles updates.
-      // We only blind-set if data is a full document update (PlainEditor fallback).
-      if (typeof data.content === 'string') {
-          setContent(data.content || '');
-      }
     };
 
     const handleUsersUpdated = (users) => {
@@ -105,13 +90,7 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       }));
     };
 
-    const handleServerResync = (data) => {
-      setContent(data.content);
-      baseVersionRef.current = data.version;
-    };
-
     socket.on("initial-document", handleInitialDocument);
-    socket.on("receive-changes", handleReceiveChanges);
     socket.on("users-updated", handleUsersUpdated);
     socket.on("snapshots-updated", handleSnapshotsUpdated);
     socket.on("activity-updated", handleActivityUpdated);
@@ -120,11 +99,9 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
     socket.on("cursor-update", handleCursorUpdate);
     socket.on("user-left", handleUserLeft);
     socket.on("document-version-updated", handleVersionUpdated);
-    socket.on("server-resync", handleServerResync);
 
     return () => {
       socket.off("initial-document", handleInitialDocument);
-      socket.off("receive-changes", handleReceiveChanges);
       socket.off("users-updated", handleUsersUpdated);
       socket.off("snapshots-updated", handleSnapshotsUpdated);
       socket.off("activity-updated", handleActivityUpdated);
@@ -133,33 +110,19 @@ export const useDocument = (socket, roomId, userName, userColor, token) => {
       socket.off("cursor-update", handleCursorUpdate);
       socket.off("user-left", handleUserLeft);
       socket.off("document-version-updated", handleVersionUpdated);
-      socket.off("server-resync", handleServerResync);
       
       if (editTimeoutRef.current) clearTimeout(editTimeoutRef.current);
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
       if (cursorThrottleRef.current) clearTimeout(cursorThrottleRef.current);
     };
   }, [socket]);
 
-  const updateContent = (newContent, diffDelta = null) => {
+  const updateContent = (newContent) => {
     setContent(newContent);
     setLastEditedBy(userName);
     isLocalDirtyRef.current = true;
 
     if (socket) {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        // Emit the delta if available (RichEditor), else fallback to full string (PlainEditor)
-        socket.emit('send-changes', { 
-            roomId, 
-            content: diffDelta || newContent, 
-            userName, 
-            token,
-            baseVersion: baseVersionRef.current
-        });
-      }, 100);
-
       if (logTimeoutRef.current) clearTimeout(logTimeoutRef.current);
       logTimeoutRef.current = setTimeout(() => {
         socket.emit('log-edit', { roomId, userName, userColor });
