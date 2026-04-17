@@ -87,6 +87,7 @@ async function connectToDatabase(retries = 5) {
   if (!mongoUri || mongoUri.trim() === "") {
     if (process.env.NODE_ENV === "production") {
       console.error("CRITICAL: MONGO_URI is missing in production environment!");
+      console.error("Deployment will fail to prevent data loss or volatile storage usage.");
       process.exit(1);
     }
     console.log("No MONGO_URI provided. Starting a localized in-memory MongoDB server...");
