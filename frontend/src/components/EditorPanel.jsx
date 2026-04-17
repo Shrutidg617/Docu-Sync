@@ -3,6 +3,9 @@ import Quill from 'quill';
 import QuillCursors from 'quill-cursors';
 import 'quill/dist/quill.snow.css';
 import { getCaretCoordinates } from '../utils/caretHelper';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { QuillBinding } from 'y-quill';
 
 // Register quill-cursors once
 Quill.register('modules/cursors', QuillCursors);
@@ -53,7 +56,7 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange; // keep latest without re-init
 
-  // Init Quill once on mount
+  // Init Quill and Yjs once on mount
   useEffect(() => {
     if (!containerRef.current || quillRef.current) return;
 
@@ -76,162 +79,52 @@ const RichEditor = forwardRef(({ content, onChange, remoteCursors, socket, roomI
     quillRef.current = q;
     cursorsModuleRef.current = q.getModule('cursors');
 
-    // Load initial content
-    try {
-      const delta = JSON.parse(content);
-      q.setContents(delta, 'silent');
-      lastRemoteContent.current = content;
-    } catch {
-      q.setText(content || '', 'silent');
-      lastRemoteContent.current = content || '';
+    // Yjs Setup
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText('quill');
+    
+    // Connect to specific backend WebSocket endpoint, using the roomId
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
+    
+    // Y-Websocket provider magically routes by "room name" parameter automatically
+    const provider = new WebsocketProvider(wsUrl, roomId, ydoc);
+    
+    // Optional awareness payload passing
+    provider.awareness.setLocalStateField('user', {
+        name: userName,
+        color: userColor
+    });
+
+    const binding = new QuillBinding(ytext, q, provider.awareness);
+
+    // Initial content load trap (only load if document is empty)
+    if (content && q.getLength() <= 1) {
+      try {
+        const delta = JSON.parse(content);
+        q.setContents(delta, 'silent');
+      } catch {}
     }
 
-    // Listen for local edits
-    q.on('text-change', (delta, oldDelta, source) => {
-      if (isRemoteRef.current || source !== 'user') return;
+    // Pass changes upstream so snapshotting and Autosave sees it
+    q.on('text-change', () => {
       const fullDelta = q.getContents();
       const stringified = JSON.stringify(fullDelta);
-      lastRemoteContent.current = stringified; // identify as "known" to prevent prop-feedback loop
-      // Send BOTH the full stringified document AND the isolated delta change
-      onChangeRef.current(stringified, delta);
+      onChangeRef.current(stringified, null);
     });
 
     return () => {
       const toolbar = q.getModule('toolbar');
       if (toolbar && toolbar.container) toolbar.container.remove();
       q.off('text-change');
+      binding.destroy();
+      provider.destroy();
+      ydoc.destroy();
       quillRef.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync with 'content' prop (fallback for external state changes like Restore)
-  useEffect(() => {
-    const q = quillRef.current;
-    if (!q || !content) return;
-    
-    // Normalize content for comparison to prevent infinite JSON stringification loops
-    if (content === lastRemoteContent.current) return;
 
-    isRemoteRef.current = true;
-    try {
-      const delta = JSON.parse(content);
-      // Double check if it actually changed by comparing deltas
-      const current = q.getContents();
-      if (JSON.stringify(current) !== content) {
-          q.setContents(delta, 'silent');
-      }
-    } catch {
-      if (q.getText().trim() !== content.trim()) {
-          q.setText(content || '', 'silent');
-      }
-    }
-    lastRemoteContent.current = content;
-    isRemoteRef.current = false;
-  }, [content]);
-
-  // Apply incoming content changes from socket (without echo loop)
-  useEffect(() => {
-    if (!socket) return;
-
-    const applyRemoteContent = (data) => {
-      const q = quillRef.current;
-      if (!q || !data.content) return;
-      
-      // If we already have this content (from prop sync or previous event), skip
-      if (data.content === lastRemoteContent.current) return;
-
-      isRemoteRef.current = true;
-      try {
-        const incoming = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
-        
-        // If it's a pure diff Delta (has ops but is not a full doc length), it's from the new OT system!
-        if (incoming.ops && incoming.ops.length > 0 && !data.isFullDoc) {
-             q.updateContents(incoming, 'silent');
-        } else {
-             // Fallback to full doc replacement
-             const current = JSON.stringify(q.getContents());
-             if (JSON.stringify(incoming) !== current) {
-               const sel = q.getSelection();
-               q.setContents(incoming, 'silent');
-               if (sel) q.setSelection(sel, 'silent');
-             }
-        }
-        
-        lastRemoteContent.current = JSON.stringify(q.getContents());
-      } catch {
-        q.setText(data.content || '', 'silent');
-        lastRemoteContent.current = data.content;
-      }
-      isRemoteRef.current = false;
-    };
-
-    socket.on('receive-changes', applyRemoteContent);
-    socket.on('document-updated', applyRemoteContent);
-    return () => {
-      socket.off('receive-changes', applyRemoteContent);
-      socket.off('document-updated', applyRemoteContent);
-    };
-  }, [socket]);
-
-  // Render remote cursors via quill-cursors
-  useEffect(() => {
-    const cursors = cursorsModuleRef.current;
-    if (!cursors || !remoteCursors) return;
-
-    // Grouping for staggering (visual collision fix)
-    const positionMap = new Map();
-
-    Object.entries(remoteCursors).forEach(([uid, data]) => {
-      try {
-        const index = data.index || 0;
-        if (!positionMap.has(index)) positionMap.set(index, []);
-        positionMap.get(index).push(uid);
-
-        cursors.createCursor(uid, data.userName, data.userColor);
-        cursors.moveCursor(uid, { index, length: 0 });
-      } catch {}
-    });
-
-    // Apply staggering to the labels via DOM
-    // We use a safe delay to ensure library has rendered/moved the elements
-    const timeoutId = setTimeout(() => {
-      if (!containerRef.current) return;
-      const allCursorEls = containerRef.current.querySelectorAll('.ql-cursor');
-      allCursorEls.forEach(cursorEl => {
-        const labelEl = cursorEl.querySelector('.ql-cursor-label');
-        if (!labelEl) return;
-
-        // Reset first to get an accurate baseline measurement
-        labelEl.style.transform = '';
-
-        const rect = cursorEl.getBoundingClientRect();
-        const others = Array.from(allCursorEls).filter(other => {
-          const oRect = other.getBoundingClientRect();
-          return other !== cursorEl && 
-                 Math.abs(oRect.left - rect.left) < 3 &&
-                 Math.abs(oRect.top - rect.top) < 3;
-        });
-
-        if (others.length > 0) {
-          // Collision detected! Sort them by text name or data-id for consistency
-          const collisionGroup = [cursorEl, ...others].sort((a,b) => {
-            const nameA = a.querySelector('.ql-cursor-label')?.innerText || '';
-            const nameB = b.querySelector('.ql-cursor-label')?.innerText || '';
-            return nameA.localeCompare(nameB);
-          });
-          
-          const myOrder = collisionGroup.indexOf(cursorEl);
-          if (myOrder > 0) {
-            // Stagger labels horizontally by 14px and vertically by 4px
-            labelEl.style.transform = `translate(${myOrder * 14}px, ${myOrder * -4}px)`;
-            labelEl.style.zIndex = 200 + myOrder;
-          }
-        }
-      });
-    }, 50);
-
-    return () => clearTimeout(timeoutId);
-  }, [remoteCursors]);
 
   useImperativeHandle(ref, () => ({
     getPlainText: () => quillRef.current?.getText() || '',

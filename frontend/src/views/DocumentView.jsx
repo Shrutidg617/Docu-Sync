@@ -74,7 +74,7 @@ function DocumentView() {
   }, []);
 
   const { saveSnapshot, savingSnapshot, autoSaveMessage } = useAutosave(
-    API_URL, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef
+    API_URL, content, roomId, userName, userColor, lastSnapshotContentRef, token, baseVersionRef, handleConflict, isLocalDirtyRef, socket
   );
 
   const [restoringSnapshotId, setRestoringSnapshotId] = useState('');

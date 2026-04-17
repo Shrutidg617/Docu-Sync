@@ -4,6 +4,8 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const { Server } = require("socket.io");
+const WebSocket = require("ws");
+const { setupWSConnection } = require("y-websocket/bin/utils");
 const { Delta } = require("quill-delta");
 const Document = require("./models/Document");
 const Snapshot = require("./models/Snapshot");
@@ -209,6 +211,12 @@ app.post("/api/document/:roomId/snapshot", authMiddleware, async (req, res) => {
         serverContent: await loadContent(doc),
         message: "Race condition conflict detected. Another user just saved. Please merge manually."
       });
+    }
+
+    // Phase 2 Fix: Sync the OCC version back into the fast memory engine to prevent 409 loops
+    const activeState = roomState.get(roomId);
+    if (activeState) {
+      activeState.version = updatedDoc.version;
     }
 
     // Now push to hybrid storage properly using the validated new document
@@ -421,6 +429,13 @@ app.post("/api/document/:roomId/reset", authMiddleware, async (req, res) => {
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
+  const electCoordinator = (roomId) => {
+    const users = activeUsersByRoom[roomId];
+    if (users && users.length > 0) {
+      io.to(roomId).emit("coordinator-assigned", users[0].socketId);
+    }
+  };
+
   socket.on("join-room", async ({ roomId, userName, color, token }) => {
     try {
       let verifiedUserId = null;
@@ -509,6 +524,7 @@ io.on("connection", (socket) => {
       });
 
       io.to(roomId).emit("users-updated", activeUsersByRoom[roomId]);
+      electCoordinator(roomId);
       io.to(roomId).emit("activity-updated", activityLogs);
     } catch (error) {
       console.error("Join room error:", error.message);
@@ -516,13 +532,19 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("send-changes", ({ roomId, content, userName, token }) => {
+  socket.on("send-changes", ({ roomId, content, userName, token, baseVersion = 0 }) => {
     try {
       const state = roomState.get(roomId);
       if (!state) return;
       
       // Simple loop/auth guard via state users cache
       if (!state.users.has(socket.id)) return;
+
+      if (baseVersion < state.version) {
+        console.warn(`[Guardrail] Dropping stale payload from ${userName}. Client: ${baseVersion}, Server: ${state.version}`);
+        socket.emit("server-resync", { content: state.content, version: state.version });
+        return;
+      }
 
       // Apply Delta dynamically (fallback if string overrides)
       state.content = applyDelta(state.content, content);
@@ -572,6 +594,7 @@ io.on("connection", (socket) => {
         );
 
         io.to(roomId).emit("users-updated", activeUsersByRoom[roomId]);
+        electCoordinator(roomId);
 
         if (userName) {
           await addActivity(roomId, {
@@ -596,6 +619,23 @@ io.on("connection", (socket) => {
 });
 
 const PORT = process.env.PORT || 5001;
+
+// Yjs WebSockets Upgrade Handler
+const wss = new WebSocket.Server({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  // Try to only handle paths starting with /yjs/
+  if (request.url.startsWith('/yjs/')) {
+    // We rewrite the URL so y-websocket picks up the room name correctly
+    // /yjs/room123 -> /room123
+    request.url = request.url.replace('/yjs', '');
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  }
+});
+
+wss.on('connection', setupWSConnection);
 
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
